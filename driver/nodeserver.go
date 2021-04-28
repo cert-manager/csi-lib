@@ -58,7 +58,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	log.Info("Volume ready for mounting")
 
-	notMnt, err := slowIsNotMountPoint(mount.New(""), req.GetTargetPath())
+	notMnt, err := mount.IsNotMountPoint(mount.New(""), req.GetTargetPath())
 	if err != nil {
 		return nil, err
 	}
@@ -83,24 +83,6 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
-// slowIsNotMountPoint is an alternative to mounter.IsLikelyNotMountPoint which
-// checks if the given path is a mount point by performing a full `List` of the
-// system's mounted paths (e.g. it WILL work with bind mounted volumes).
-func slowIsNotMountPoint(mounter mount.Interface, path string) (bool, error) {
-	mounts, err := mounter.List()
-	if err != nil {
-		return false, err
-	}
-
-	for _, m := range mounts {
-		if m.Path == path {
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
 func loggerForMetadata(log logr.Logger, meta metadata.Metadata) logr.Logger {
 	return log.WithValues("pod_name", meta.CSIAttributes["csi.storage.k8s.io/pod.name"])
 }
@@ -118,7 +100,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 	ns.manager.UnmanageVolume(request.GetVolumeId())
 	log.Info("Stopped management of volume")
 
-	notMnt, err := slowIsNotMountPoint(mount.New(""), request.GetTargetPath())
+	notMnt, err := mount.IsNotMountPoint(mount.New(""), request.GetTargetPath())
 	if err != nil {
 		return nil, err
 	}
