@@ -76,7 +76,11 @@ func main() {
 		panic("cannot load in-cluster config")
 	}
 
-	store := storage.NewFilesystem(*dataRoot)
+	store, err := storage.NewFilesystem(log, *dataRoot)
+	if err != nil {
+		panic("failed to setup filesystem: " + err.Error())
+	}
+
 	driver.New("csi.cert-manager.io", "v0.0.1", *nodeID, *endpoint, log, store, manager.NewManagerOrDie(manager.Options{
 		CertificateRequestClient: cmclient.NewForConfigOrDie(restConfig),
 		MetadataReader:           store,

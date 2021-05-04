@@ -9,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/go-logr/logr"
+	"k8s.io/mount-utils"
+
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/util"
 )
@@ -19,6 +22,8 @@ const (
 )
 
 type Filesystem struct {
+	log logr.Logger
+
 	// baseDir is the absolute path to a directory used to store all metadata
 	// about mounted volumes and mount points.
 	baseDir string
@@ -30,13 +35,33 @@ type Filesystem struct {
 // Ensure the Filesystem implementation is fully featured
 var _ Interface = &Filesystem{}
 
-func NewFilesystem(baseDir string) *Filesystem {
-	return &Filesystem{
+func NewFilesystem(log logr.Logger, baseDir string) (*Filesystem, error) {
+	f := &Filesystem{
+		log:     log,
 		baseDir: baseDir,
 		// Use the rootfs as the DirFS so that paths passed to both read &
 		// write methods on this struct use a consistent root.
 		fs: os.DirFS("/"),
 	}
+
+	notMnt, err := mount.IsNotMountPoint(mount.New(""), f.tempfsPath())
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err := os.MkdirAll(f.tempfsPath(), 0700); err != nil {
+			return nil, err
+		}
+	}
+
+	if notMnt {
+		if err := mount.New("").Mount("tmpfs", f.tempfsPath(), "tmpfs", []string{}); err != nil {
+			return nil, fmt.Errorf("mounting tmpfs: %w", err)
+		}
+		log.Info("Mounted new tmpfs", "path", f.tempfsPath())
+	}
+
+	return f, nil
 }
 
 func (f *Filesystem) PathForVolume(volumeID string) string {
