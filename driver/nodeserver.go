@@ -88,11 +88,11 @@ func loggerForMetadata(log logr.Logger, meta metadata.Metadata) logr.Logger {
 }
 
 func (ns *nodeServer) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "")
+	return nil, status.Error(codes.Unimplemented, "NodeStageVolume not implemented")
 }
 
 func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "")
+	return nil, status.Error(codes.Unimplemented, "NodeUnstageVolume not implemented")
 }
 
 func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
@@ -122,11 +122,11 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 }
 
 func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "")
+	return nil, status.Error(codes.Unimplemented, "NodeGetVolumeStats not implemented")
 }
 
 func (ns *nodeServer) NodeExpandVolume(ctx context.Context, request *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "")
+	return nil, status.Error(codes.Unimplemented, "NodeExpandVolume not implemented")
 }
 
 func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
