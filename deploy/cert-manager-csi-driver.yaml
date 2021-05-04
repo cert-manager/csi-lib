@@ -101,6 +101,7 @@ spec:
               mountPropagation: "Bidirectional"
             - name: csi-data-dir
               mountPath: /csi-data-dir
+              mountPropagation: "Bidirectional"
       volumes:
         - name: plugin-dir
           hostPath:
