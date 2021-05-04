@@ -245,8 +245,8 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 				{
 					APIVersion: "core/v1",
 					Kind:       "Pod",
-					Name:       meta.CSIAttributes["csi.storage.k8s.io/pod.name"],
-					UID:        types.UID(meta.CSIAttributes["csi.storage.k8s.io/pod.uid"]),
+					Name:       meta.VolumeContext["csi.storage.k8s.io/pod.name"],
+					UID:        types.UID(meta.VolumeContext["csi.storage.k8s.io/pod.uid"]),
 				},
 			},
 		},

@@ -84,7 +84,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 }
 
 func loggerForMetadata(log logr.Logger, meta metadata.Metadata) logr.Logger {
-	return log.WithValues("pod_name", meta.CSIAttributes["csi.storage.k8s.io/pod.name"])
+	return log.WithValues("pod_name", meta.VolumeContext["csi.storage.k8s.io/pod.name"])
 }
 
 func (ns *nodeServer) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {

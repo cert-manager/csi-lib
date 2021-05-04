@@ -65,7 +65,7 @@ func TestFilesystem_MetadataForVolume_InvalidJSON(t *testing.T) {
 func TestFilesystem_MetadataForVolume(t *testing.T) {
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "csiAttributes": {"a": "b"}}`)},
+			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "volumeContext": {"a": "b"}}`)},
 		},
 	}
 
@@ -77,7 +77,7 @@ func TestFilesystem_MetadataForVolume(t *testing.T) {
 	if !reflect.DeepEqual(meta, metadata.Metadata{
 		VolumeID:      "fake-volume",
 		TargetPath:    "/fake-volume",
-		CSIAttributes: map[string]string{"a": "b"},
+		VolumeContext: map[string]string{"a": "b"},
 	}) {
 		t.Errorf("unexpected metadata: %#v", meta)
 	}
