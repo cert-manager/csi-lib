@@ -46,6 +46,9 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	if req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] != "true" {
 		return nil, fmt.Errorf("only ephemeral volume types are supported")
 	}
+	if !req.GetReadonly() {
+		return nil, status.Error(codes.InvalidArgument, "pod.spec.volumes[].csi.readOnly must be set to 'true'")
+	}
 
 	if registered, err := ns.store.RegisterMetadata(meta); err != nil {
 		return nil, err
