@@ -18,7 +18,6 @@ package driver
 
 import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/glog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -62,8 +61,6 @@ func (cs *controllerServer) GetCapacity(ctx context.Context, req *csi.GetCapacit
 // ControllerGetCapabilities implements the default GRPC callout.
 // Default supports all capabilities
 func (cs *controllerServer) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
-	glog.V(5).Infof("Using default ControllerGetCapabilities")
-
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: []*csi.ControllerServiceCapability{
 			&csi.ControllerServiceCapability{
