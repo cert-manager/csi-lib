@@ -62,6 +62,7 @@ spec:
         - name: tls
           csi:
             driver: csi.cert-manager.io
+            readOnly: true
             volumeAttributes:
                   csi.cert-manager.io/issuer-name: ca-issuer
                   csi.cert-manager.io/dns-names: my-service.sandbox.svc.cluster.local
