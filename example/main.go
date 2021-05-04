@@ -101,7 +101,7 @@ func (k *keygen) generatePrivateKey(meta metadata.Metadata) (crypto.PrivateKey, 
 	genPrivateKey := func() (crypto.PrivateKey, error) { return rsa.GenerateKey(rand.Reader, 2048) }
 
 	// By default, generate a new private key each time.
-	if meta.CSIAttributes[ReusePrivateKey] != "true" {
+	if meta.VolumeContext[ReusePrivateKey] != "true" {
 		return genPrivateKey()
 	}
 
@@ -121,20 +121,20 @@ func (k *keygen) generatePrivateKey(meta metadata.Metadata) (crypto.PrivateKey, 
 }
 
 func generateRequest(meta metadata.Metadata) (*manager.CertificateRequestBundle, error) {
-	namespace := meta.CSIAttributes["csi.storage.k8s.io/pod.namespace"]
+	namespace := meta.VolumeContext["csi.storage.k8s.io/pod.namespace"]
 
-	uris, err := parseURIs(meta.CSIAttributes[URISANsKey])
+	uris, err := parseURIs(meta.VolumeContext[URISANsKey])
 	if err != nil {
 		return nil, fmt.Errorf("invalid URI provided in %q attribute: %w", URISANsKey, err)
 	}
 
-	ips := parseIPAddresses(meta.CSIAttributes[IPSANsKey])
+	ips := parseIPAddresses(meta.VolumeContext[IPSANsKey])
 
-	dnsNames := strings.Split(meta.CSIAttributes[DNSNamesKey], ",")
-	commonName := meta.CSIAttributes[CommonNameKey]
+	dnsNames := strings.Split(meta.VolumeContext[DNSNamesKey], ",")
+	commonName := meta.VolumeContext[CommonNameKey]
 
 	duration := cmapi.DefaultCertificateDuration
-	if durStr, ok := meta.CSIAttributes[DurationKey]; ok {
+	if durStr, ok := meta.VolumeContext[DurationKey]; ok {
 		duration, err = time.ParseDuration(durStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid %q attribute: %w", DurationKey, err)
@@ -142,7 +142,7 @@ func generateRequest(meta metadata.Metadata) (*manager.CertificateRequestBundle,
 	}
 
 	isCA := false
-	if isCAStr, ok := meta.CSIAttributes[IsCAKey]; ok {
+	if isCAStr, ok := meta.VolumeContext[IsCAKey]; ok {
 		switch strings.ToLower(isCAStr) {
 		case "true":
 			isCA = true
@@ -163,11 +163,11 @@ func generateRequest(meta metadata.Metadata) (*manager.CertificateRequestBundle,
 		IsCA:      isCA,
 		Namespace: namespace,
 		Duration:  duration,
-		Usages:    keyUsagesFromAttributes(meta.CSIAttributes[KeyUsagesKey]),
+		Usages:    keyUsagesFromAttributes(meta.VolumeContext[KeyUsagesKey]),
 		IssuerRef: cmmeta.ObjectReference{
-			Name:  meta.CSIAttributes[IssuerNameKey],
-			Kind:  meta.CSIAttributes[IssuerKindKey],
-			Group: meta.CSIAttributes[IssuerGroupKey],
+			Name:  meta.VolumeContext[IssuerNameKey],
+			Kind:  meta.VolumeContext[IssuerKindKey],
+			Group: meta.VolumeContext[IssuerGroupKey],
 		},
 		Annotations: nil,
 	}, nil
@@ -191,16 +191,16 @@ func (w *writer) writeKeypair(meta metadata.Metadata, key crypto.PrivateKey, cha
 	)
 
 	pkFile := "tls.key"
-	if meta.CSIAttributes[KeyFileKey] != "" {
-		pkFile = meta.CSIAttributes[KeyFileKey]
+	if meta.VolumeContext[KeyFileKey] != "" {
+		pkFile = meta.VolumeContext[KeyFileKey]
 	}
 	crtFile := "tls.crt"
-	if meta.CSIAttributes[CertFileKey] != "" {
-		crtFile = meta.CSIAttributes[CertFileKey]
+	if meta.VolumeContext[CertFileKey] != "" {
+		crtFile = meta.VolumeContext[CertFileKey]
 	}
 	caFile := "ca.crt"
-	if meta.CSIAttributes[CAFileKey] != "" {
-		caFile = meta.CSIAttributes[CAFileKey]
+	if meta.VolumeContext[CAFileKey] != "" {
+		caFile = meta.VolumeContext[CAFileKey]
 	}
 
 	nextIssuanceTime, err := calculateNextIssuanceTime(meta, chain)
@@ -234,8 +234,8 @@ func calculateNextIssuanceTime(meta metadata.Metadata, chain []byte) (time.Time,
 	actualDuration := crt.NotAfter.Sub(crt.NotBefore)
 	// if not explicitly set, renew once a certificate is 2/3rds of the way through its lifetime
 	renewBeforeNotAfter := actualDuration / 3
-	if meta.CSIAttributes[RenewBeforeKey] != "" {
-		renewBeforeDuration, err := time.ParseDuration(meta.CSIAttributes[RenewBeforeKey])
+	if meta.VolumeContext[RenewBeforeKey] != "" {
+		renewBeforeDuration, err := time.ParseDuration(meta.VolumeContext[RenewBeforeKey])
 		if err != nil {
 			return time.Time{}, fmt.Errorf("parsing requested renew-before duration: %w", err)
 		}
