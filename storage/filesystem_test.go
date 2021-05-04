@@ -12,7 +12,7 @@ import (
 func TestFilesystem_ReadFile(t *testing.T) {
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
+			"inmemfs/fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
 		},
 	}
 
@@ -28,7 +28,7 @@ func TestFilesystem_ReadFile(t *testing.T) {
 func TestFilesystem_ReadFile_NotFound(t *testing.T) {
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
+			"inmemfs/fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
 		},
 	}
 
@@ -52,7 +52,7 @@ func TestFilesystem_MetadataForVolume_NotFound(t *testing.T) {
 func TestFilesystem_MetadataForVolume_InvalidJSON(t *testing.T) {
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"fake-volume/metadata.json": &fstest.MapFile{Data: []byte("{")},
+			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte("{")},
 		},
 	}
 
@@ -65,7 +65,7 @@ func TestFilesystem_MetadataForVolume_InvalidJSON(t *testing.T) {
 func TestFilesystem_MetadataForVolume(t *testing.T) {
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"fake-volume/metadata.json": &fstest.MapFile{Data: []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "csiAttributes": {"a": "b"}}`)},
+			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "csiAttributes": {"a": "b"}}`)},
 		},
 	}
 
@@ -84,10 +84,9 @@ func TestFilesystem_MetadataForVolume(t *testing.T) {
 }
 
 func TestFilesystem_ListVolumes(t *testing.T) {
-	t.Skip("Failing test (I think due to the way MapFS works)")
 	backend := &Filesystem{
 		fs: fstest.MapFS{
-			"fake-volume/metadata.json": &fstest.MapFile{Data: []byte{}},
+			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte{}},
 		},
 	}
 

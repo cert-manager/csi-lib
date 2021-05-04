@@ -44,11 +44,11 @@ func (f *Filesystem) PathForVolume(volumeID string) string {
 }
 
 func (f *Filesystem) RemoveVolume(volumeID string) error {
-	return os.RemoveAll(filepath.Join(f.baseDir, volumeID))
+	return os.RemoveAll(filepath.Join(f.tempfsPath(), volumeID))
 }
 
 func (f *Filesystem) ListVolumes() ([]string, error) {
-	dirs, err := fs.ReadDir(f.fs, f.baseDir)
+	dirs, err := fs.ReadDir(f.fs, f.tempfsPath())
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes: %w", err)
 	}
@@ -117,7 +117,7 @@ func (f *Filesystem) WriteMetadata(volumeID string, meta metadata.Metadata) erro
 func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	_, err := f.ReadMetadata(meta.VolumeID)
 	if errors.Is(err, ErrNotFound) {
-		if err := os.MkdirAll(filepath.Join(f.baseDir, meta.VolumeID), 0644); err != nil {
+		if err := os.MkdirAll(f.volumePath(meta.VolumeID), 0644); err != nil {
 			return false, err
 		}
 
@@ -157,13 +157,21 @@ func (f *Filesystem) ReadFile(volumeID, name string) ([]byte, error) {
 // metadataPathForVolumeID returns the metadata.json path for the volume with
 // the given ID
 func (f *Filesystem) metadataPathForVolumeID(id string) string {
-	return filepath.Join(f.baseDir, id, "metadata.json")
+	return filepath.Join(f.volumePath(id), "metadata.json")
 }
 
 // dataPathForVolumeID returns the data directory for the volume with the
 // given ID
 func (f *Filesystem) dataPathForVolumeID(id string) string {
-	return filepath.Join(f.baseDir, id, "data")
+	return filepath.Join(f.volumePath(id), "data")
+}
+
+func (f *Filesystem) volumePath(id string) string {
+	return filepath.Join(f.tempfsPath(), id)
+}
+
+func (f *Filesystem) tempfsPath() string {
+	return filepath.Join(f.baseDir, "inmemfs")
 }
 
 func makePayload(in map[string][]byte) map[string]util.FileProjection {
