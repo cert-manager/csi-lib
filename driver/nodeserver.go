@@ -29,6 +29,19 @@ type nodeServer struct {
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	meta := metadata.FromNodePublishVolumeRequest(req)
 	log := loggerForMetadata(ns.log, meta)
+	ctx, _ = context.WithTimeout(ctx, time.Second * 30)
+
+	// clean up after ourselves if provisioning fails.
+	// this is required because if publishing never succeeds, unpublish is not
+	// called which leaves files around (and we may continue to renew if so).
+	success := false
+	defer func() {
+		if !success {
+			ns.manager.UnmanageVolume(req.GetVolumeId())
+			_ = mount.New("").Unmount(req.GetTargetPath())
+			_ = ns.store.RemoveVolume(req.GetVolumeId())
+		}
+	}()
 
 	if req.GetVolumeContext()["csi.storage.k8s.io/ephemeral"] != "true" {
 		return nil, fmt.Errorf("only ephemeral volume types are supported")
@@ -57,28 +70,30 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	log.Info("Volume ready for mounting")
-
 	notMnt, err := mount.IsNotMountPoint(mount.New(""), req.GetTargetPath())
-	if err != nil {
+	switch {
+	case os.IsNotExist(err):
+		if err := os.MkdirAll(req.GetTargetPath(), 0440); err != nil {
+			return nil, err
+		}
+		notMnt = true
+	case err != nil:
 		return nil, err
 	}
+
 	if !notMnt {
 		// Nothing more to do if the targetPath is already a bind mount
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
 	log.Info("Bind mounting data directory to the targetPath")
-
-	if err := os.MkdirAll(req.GetTargetPath(), 0440); err != nil {
-		return nil, err
-	}
-
 	// bind mount the targetPath to the data directory
 	if err := mount.New("").Mount(ns.store.PathForVolume(req.GetVolumeId()), req.GetTargetPath(), "", []string{"bind", "ro"}); err != nil {
 		return nil, err
 	}
 
 	log.Info("Volume successfully provisioned and mounted")
+	success = true
 
 	return &csi.NodePublishVolumeResponse{}, nil
 }
