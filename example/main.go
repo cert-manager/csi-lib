@@ -19,9 +19,9 @@ import (
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/typed/certmanager/v1"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2/klogr"
+	"k8s.io/utils/clock"
 
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
@@ -81,16 +81,29 @@ func main() {
 		panic("failed to setup filesystem: " + err.Error())
 	}
 
-	driver.New("csi.cert-manager.io", "v0.0.1", *nodeID, *endpoint, log, store, manager.NewManagerOrDie(manager.Options{
-		CertificateRequestClient: cmclient.NewForConfigOrDie(restConfig),
-		MetadataReader:           store,
-		Clock:                    clock.RealClock{},
-		Log:                      log,
-		GeneratePrivateKey:       (&keygen{store: store}).generatePrivateKey,
-		GenerateRequest:          generateRequest,
-		SignRequest:              signRequest,
-		WriteKeypair:             (&writer{store: store}).writeKeypair,
-	})).Run()
+	d, err := driver.New(*endpoint, log, driver.Options{
+		DriverName:    "csi.cert-manager.io",
+		DriverVersion: "v0.0.1",
+		NodeID:        *nodeID,
+		Store:         store,
+		Manager: manager.NewManagerOrDie(manager.Options{
+			CertificateRequestClient: cmclient.NewForConfigOrDie(restConfig),
+			MetadataReader:           store,
+			Clock:                    clock.RealClock{},
+			Log:                      log,
+			GeneratePrivateKey:       (&keygen{store: store}).generatePrivateKey,
+			GenerateRequest:          generateRequest,
+			SignRequest:              signRequest,
+			WriteKeypair:             (&writer{store: store}).writeKeypair,
+		}),
+	})
+	if err != nil {
+		panic("failed to setup driver: " + err.Error())
+	}
+
+	if err := d.Run(); err != nil {
+		panic("failed running driver: " + err.Error())
+	}
 }
 
 // keygen wraps the storage backend to allow for re-using private keys when

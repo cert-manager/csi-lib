@@ -5,7 +5,6 @@ go 1.16
 require (
 	github.com/container-storage-interface/spec v1.4.0
 	github.com/go-logr/logr v0.4.0
-	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/jetstack/cert-manager v1.3.1
 	github.com/kubernetes-csi/csi-lib-utils v0.9.1

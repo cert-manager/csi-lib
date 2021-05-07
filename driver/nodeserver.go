@@ -22,6 +22,7 @@ type nodeServer struct {
 	nodeID  string
 	manager *manager.Manager
 	store   storage.Interface
+	mounter mount.Interface
 
 	log logr.Logger
 }
@@ -29,7 +30,7 @@ type nodeServer struct {
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	meta := metadata.FromNodePublishVolumeRequest(req)
 	log := loggerForMetadata(ns.log, meta)
-	ctx, _ = context.WithTimeout(ctx, time.Second * 30)
+	ctx, _ = context.WithTimeout(ctx, time.Second*30)
 
 	// clean up after ourselves if provisioning fails.
 	// this is required because if publishing never succeeds, unpublish is not
@@ -38,7 +39,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	defer func() {
 		if !success {
 			ns.manager.UnmanageVolume(req.GetVolumeId())
-			_ = mount.New("").Unmount(req.GetTargetPath())
+			_ = ns.mounter.Unmount(req.GetTargetPath())
 			_ = ns.store.RemoveVolume(req.GetVolumeId())
 		}
 	}()
@@ -73,7 +74,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	log.Info("Volume ready for mounting")
-	notMnt, err := mount.IsNotMountPoint(mount.New(""), req.GetTargetPath())
+	notMnt, err := mount.IsNotMountPoint(ns.mounter, req.GetTargetPath())
 	switch {
 	case os.IsNotExist(err):
 		if err := os.MkdirAll(req.GetTargetPath(), 0440); err != nil {
@@ -91,7 +92,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	log.Info("Bind mounting data directory to the targetPath")
 	// bind mount the targetPath to the data directory
-	if err := mount.New("").Mount(ns.store.PathForVolume(req.GetVolumeId()), req.GetTargetPath(), "", []string{"bind", "ro"}); err != nil {
+	if err := ns.mounter.Mount(ns.store.PathForVolume(req.GetVolumeId()), req.GetTargetPath(), "", []string{"bind", "ro"}); err != nil {
 		return nil, err
 	}
 
@@ -118,12 +119,12 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 	ns.manager.UnmanageVolume(request.GetVolumeId())
 	log.Info("Stopped management of volume")
 
-	notMnt, err := mount.IsNotMountPoint(mount.New(""), request.GetTargetPath())
+	notMnt, err := mount.IsNotMountPoint(ns.mounter, request.GetTargetPath())
 	if err != nil {
 		return nil, err
 	}
 	if !notMnt {
-		if err := mount.New("").Unmount(request.GetTargetPath()); err != nil {
+		if err := ns.mounter.Unmount(request.GetTargetPath()); err != nil {
 			return nil, err
 		}
 
