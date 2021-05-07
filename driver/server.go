@@ -21,82 +21,46 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/golang/glog"
+	"github.com/go-logr/logr"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
-// Defines Non blocking GRPC server interfaces
-type NonBlockingGRPCServer interface {
-	// Start services at the endpoint
-	Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer)
-	// Waits for the service to stop
-	Wait()
-	// Stops the service gracefully
-	Stop()
-	// Stops the service forcefully
-	ForceStop()
-}
-
-func NewNonBlockingGRPCServer() NonBlockingGRPCServer {
-	return &nonBlockingGRPCServer{}
-}
-
-// NonBlocking server
-type nonBlockingGRPCServer struct {
-	wg     sync.WaitGroup
+type GRPCServer struct {
+	log    logr.Logger
 	server *grpc.Server
+	lis    net.Listener
 }
 
-func (s *nonBlockingGRPCServer) Start(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
-
-	s.wg.Add(1)
-
-	go s.serve(endpoint, ids, cs, ns)
-
-	return
-}
-
-func (s *nonBlockingGRPCServer) Wait() {
-	s.wg.Wait()
-}
-
-func (s *nonBlockingGRPCServer) Stop() {
-	s.server.GracefulStop()
-}
-
-func (s *nonBlockingGRPCServer) ForceStop() {
-	s.server.Stop()
-}
-
-func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) {
-
+func NewGRPCServer(endpoint string, log logr.Logger, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) (*GRPCServer, error) {
 	proto, addr, err := parseEndpoint(endpoint)
 	if err != nil {
-		glog.Fatal(err.Error())
+		return nil, err
 	}
 
 	if proto == "unix" {
 		addr = "/" + addr
 		if err := os.Remove(addr); err != nil && !os.IsNotExist(err) {
-			glog.Fatalf("Failed to remove %s, error: %s", addr, err.Error())
+			return nil, fmt.Errorf("failed to remove %q: %w", addr, err)
 		}
 	}
 
 	listener, err := net.Listen(proto, addr)
 	if err != nil {
-		glog.Fatalf("Failed to listen: %v", err)
+		return nil, err
 	}
 
+	return NewGRPCServerWithListener(listener, log, ids, cs, ns), nil
+}
+
+func NewGRPCServerWithListener(lis net.Listener, log logr.Logger, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) *GRPCServer {
 	opts := []grpc.ServerOption{
-		grpc.UnaryInterceptor(logGRPC),
+		grpc.UnaryInterceptor(loggingInterceptor(log)),
 	}
 	server := grpc.NewServer(opts...)
-	s.server = server
 
 	if ids != nil {
 		csi.RegisterIdentityServer(server, ids)
@@ -108,10 +72,22 @@ func (s *nonBlockingGRPCServer) serve(endpoint string, ids csi.IdentityServer, c
 		csi.RegisterNodeServer(server, ns)
 	}
 
-	glog.Infof("Listening for connections on address: %#v", listener.Addr())
+	return &GRPCServer{
+		server: server,
+		lis:    lis,
+	}
+}
 
-	server.Serve(listener)
+func (g *GRPCServer) Run() error {
+	return g.server.Serve(g.lis)
+}
 
+func (s *GRPCServer) Stop() {
+	s.server.GracefulStop()
+}
+
+func (s *GRPCServer) ForceStop() {
+	s.server.Stop()
 }
 
 func parseEndpoint(ep string) (string, string, error) {
@@ -124,14 +100,16 @@ func parseEndpoint(ep string) (string, string, error) {
 	return "", "", fmt.Errorf("Invalid endpoint: %v", ep)
 }
 
-func logGRPC(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	glog.V(3).Infof("server: call: %s", info.FullMethod)
-	glog.V(5).Infof("server: request: %s", protosanitizer.StripSecrets(req))
-	resp, err := handler(ctx, req)
-	if err != nil {
-		glog.Errorf("server: error: %v", err)
-	} else {
-		glog.V(5).Infof("server: response: %s", protosanitizer.StripSecrets(resp))
+func loggingInterceptor(log logr.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		log := log.WithValues("rpc_method", info.FullMethod, "request", protosanitizer.StripSecrets(req))
+		log.V(3).Info("handling request")
+		resp, err := handler(ctx, req)
+		if err != nil {
+			log.Error(err, "failed processing request")
+		} else {
+			log.V(5).Info("request completed", "response", protosanitizer.StripSecrets(resp))
+		}
+		return resp, err
 	}
-	return resp, err
 }

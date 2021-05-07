@@ -15,9 +15,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/clock"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/clock"
 
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
@@ -147,31 +147,37 @@ type Manager struct {
 func (m *Manager) issue(volumeID string) error {
 	ctx := context.TODO()
 	log := m.log.WithValues("volume_id", volumeID)
+	log.Info("Processing issuance")
 
 	meta, err := m.metadataReader.ReadMetadata(volumeID)
 	if err != nil {
 		return fmt.Errorf("reading metadata: %w", err)
 	}
+	log.V(2).Info("Read metadata", "metadata", meta)
 
 	key, err := m.generatePrivateKey(meta)
 	if err != nil {
 		return fmt.Errorf("generating private key: %w", err)
 	}
+	log.V(2).Info("Obtained new private key")
 
 	csrBundle, err := m.generateRequest(meta)
 	if err != nil {
 		return fmt.Errorf("generating certificate signing request: %w", err)
 	}
+	log.V(2).Info("Constructed new CSR")
 
 	csrDer, err := m.signRequest(meta, key, csrBundle.Request)
 	if err != nil {
 		return fmt.Errorf("signing certificate signing request: %w", err)
 	}
+	log.V(2).Info("Signed CSR")
 
 	req, err := m.submitRequest(ctx, meta, csrBundle, csrDer)
 	if err != nil {
 		return fmt.Errorf("submitting request: %w", err)
 	}
+	log.Info("Created new CertificateRequest resource")
 
 	// Poll every 500ms for the CertificateRequest to be ready
 	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
@@ -182,6 +188,7 @@ func (m *Manager) issue(volumeID string) error {
 			return false, err
 		}
 		if err != nil {
+			log.Error(err, "Failed fetch CertificateRequest")
 			// TODO: it'd probably be better to log transient errors and retry
 			//       the Get to better handle cases where the apiserver is
 			//       intermittently unavailable but otherwise the API works.
@@ -196,6 +203,7 @@ func (m *Manager) issue(volumeID string) error {
 
 		readyCondition := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionReady)
 		if readyCondition == nil {
+			log.V(2).Info("CertificateRequest is still pending")
 			// Issuance is still pending
 			return false, nil
 		}
@@ -206,13 +214,15 @@ func (m *Manager) issue(volumeID string) error {
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
+			log.V(2).Info("CertificateRequest is still pending")
 			return false, nil
 		default:
-			log.Info("unrecognised state for Ready condition", "request_namespace", updatedReq.Namespace, "request_name", updatedReq.Name, "condition", readyCondition)
+			log.Info("unrecognised state for Ready condition", "request_namespace", updatedReq.Namespace, "request_name", updatedReq.Name, "condition", *readyCondition)
 			return false, nil
 		}
 
 		// if issuance is complete, set req to the updatedReq and continue to
+		log.V(2).Info("CertificateRequest completed and issued successfully")
 		// writing out signed certificate
 		req = updatedReq
 		return true, nil
@@ -223,6 +233,7 @@ func (m *Manager) issue(volumeID string) error {
 	if err := m.writeKeypair(meta, key, req.Status.Certificate, req.Status.CA); err != nil {
 		return fmt.Errorf("writing keypair: %w", err)
 	}
+	log.V(2).Info("Wrote new keypair to storage")
 
 	return nil
 }
@@ -275,6 +286,7 @@ func (m *Manager) ManageVolume(volumeID string) error {
 
 	// if the volume is already managed, return early
 	if _, ok := m.managedVolumes[volumeID]; ok {
+		log.V(2).Info("Volume already registered for management")
 		return nil
 	}
 
@@ -294,12 +306,14 @@ func (m *Manager) ManageVolume(volumeID string) error {
 			case <-ticker.C:
 				meta, err := m.metadataReader.ReadMetadata(volumeID)
 				if err != nil {
-					log.Error(err, "failed to read metadata")
+					log.Error(err, "Failed to read metadata")
+					continue
 				}
 
 				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
+					log.Info("Triggering new issuance")
 					if err := m.issue(volumeID); err != nil {
-						m.log.Error(err, "failed to issue certificate")
+						log.Error(err, "Failed to issue certificate")
 						// retry the request in 1 second time
 						// TODO: exponentially back-off
 						continue
@@ -334,4 +348,14 @@ func (m *Manager) IsVolumeReady(volumeID string) bool {
 	}
 
 	return true
+}
+
+// Stop will stop management of all managed volumes
+func (m *Manager) Stop() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	for k, stopCh := range m.managedVolumes {
+		close(stopCh)
+		delete(m.managedVolumes, k)
+	}
 }
