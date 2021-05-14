@@ -53,8 +53,8 @@ The full list of new labels to be added to CertificateRequest resources:
   allow for efficient cross-referencing of CertificateRequest<>Pod (this is not strictly necessary as owner
   references are also added to CertificateRequests, but this does make it easier for administrators to debug
   any issues with issuance too).
-* `csi.cert-manager.io/pod-uid` - the UID of the pod that the CertificateRequest is created for. Used in a similar
-  way to the `pod-name` label, however, in cases where a pod is deleted and re-created with the same name it is
+* `csi.cert-manager.io/pod-uid` - the UID of the pod that the CertificateRequest is created for. Used similarly
+  to the `pod-name` label, however, in cases where a pod is deleted and re-created with the same name it is
   important we have a way to distinguish the two.
 * `csi.cert-manager.io/volume-name` - the name of the volume within the pod that the CertificateRequest is
   created for. This is required because a pod may contain multiple volume mounts, in which case we must maintain
