@@ -5,6 +5,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"sync"
 	"time"
 
@@ -16,7 +18,10 @@ import (
 	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
@@ -39,6 +44,16 @@ type Options struct {
 
 	// Logger used to write log messages
 	Log logr.Logger
+
+	// Maximum number of CertificateRequests that should exist for each
+	// volume mounted into a pod.
+	// If not set, this will be defaulted to 3.
+	// When the number of CertificateRequests for a volume exceeds this limit,
+	// requestss will be deleted before any new ones are created.
+	MaxRequestsPerVolume int
+
+	// NodeID is a unique identifier for the node.
+	NodeID string
 
 	GeneratePrivateKey GeneratePrivateKeyFunc
 	GenerateRequest    GenerateRequestFunc
@@ -75,6 +90,15 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.WriteKeypair == nil {
 		return nil, errors.New("WriteKeypair must be set")
 	}
+	if opts.MaxRequestsPerVolume == 0 {
+		opts.MaxRequestsPerVolume = 3
+	}
+	if opts.MaxRequestsPerVolume < 0 {
+		return nil, errors.New("MaxRequestsPerVolume cannot be less than zero")
+	}
+	if len(opts.NodeID) == 0 {
+		return nil, errors.New("NodeID must be set")
+	}
 
 	// Create an informer factory
 	informerFactory := cminformers.NewSharedInformerFactoryWithOptions(opts.Client, 0, cminformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
@@ -103,6 +127,9 @@ func NewManager(opts Options) (*Manager, error) {
 
 		managedVolumes: map[string]chan struct{}{},
 		stopInformer:   stopCh,
+
+		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
+		nodeNameHash:         hashString(opts.NodeID),
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -164,6 +191,13 @@ type Manager struct {
 
 	// Used to stop the informer watching for updates
 	stopInformer chan struct{}
+
+	// hash of the node name this driver is running on, used to label CertificateRequest
+	// resources to allow the lister to be scoped to requests for this node only
+	nodeNameHash string
+
+	// maximum number of CertificateRequests that should exist at any time for each volume
+	maxRequestsPerVolume int
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -171,6 +205,10 @@ func (m *Manager) issue(volumeID string) error {
 	ctx := context.TODO()
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
+
+	if err := m.cleanupStaleRequests(ctx, volumeID); err != nil {
+		return fmt.Errorf("cleaning up stale requests: %w", err)
+	}
 
 	meta, err := m.metadataReader.ReadMetadata(volumeID)
 	if err != nil {
@@ -261,6 +299,56 @@ func (m *Manager) issue(volumeID string) error {
 	return nil
 }
 
+func (m *Manager) cleanupStaleRequests(ctx context.Context, volumeID string) error {
+	sel, err := m.labelSelectorForVolume(volumeID)
+	if err != nil {
+		return fmt.Errorf("internal error building label selector - this is a bug, please open an issue: %w", err)
+	}
+
+	reqs, err := m.lister.List(sel)
+	if err != nil {
+		return fmt.Errorf("listing certificaterequests: %w", err)
+	}
+
+	if len(reqs) < m.maxRequestsPerVolume {
+		return nil
+	}
+
+	// sort newest first to oldest last
+	sort.Slice(reqs, func(i, j int) bool {
+		return reqs[i].CreationTimestamp.After(reqs[j].CreationTimestamp.Time)
+	})
+
+	// start at the end of the slice and work back to maxRequestsPerVolume
+	for i := len(reqs) - 1; i >= m.maxRequestsPerVolume-1; i-- {
+		toDelete := reqs[i]
+		if err := m.client.CertmanagerV1().CertificateRequests(toDelete.Namespace).Delete(ctx, toDelete.Name, metav1.DeleteOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				// don't fail if the resource is already deleted
+			} else {
+				return fmt.Errorf("deleting old certificaterequest: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) labelSelectorForVolume(volumeID string) (labels.Selector, error) {
+	sel := labels.NewSelector()
+	req, err := labels.NewRequirement("csi.cert-manager.io/node-name-hash", selection.Equals, []string{m.nodeNameHash})
+	if err != nil {
+		return nil, err
+	}
+	sel.Add(*req)
+	req, err = labels.NewRequirement("csi.cert-manager.io/volume-id", selection.Equals, []string{hashString(volumeID)})
+	if err != nil {
+		return nil, err
+	}
+	sel.Add(*req)
+	return sel, nil
+}
+
 // submitRequest will create a CertificateRequest resource and return the
 // created resource.
 func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csrBundle *CertificateRequestBundle, csrDer []byte) (*cmapi.CertificateRequest, error) {
@@ -275,6 +363,10 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			Name:        string(uuid.NewUUID()),
 			Namespace:   csrBundle.Namespace,
 			Annotations: csrBundle.Annotations,
+			Labels: map[string]string{
+				"csi.cert-manager.io/node-name-hash": m.nodeNameHash,
+				"csi.cert-manager.io/volume-id":      hashString(meta.VolumeID),
+			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
 					APIVersion: "core/v1",
@@ -397,4 +489,10 @@ func (m *Manager) Stop() {
 		close(stopCh)
 		delete(m.managedVolumes, k)
 	}
+}
+
+func hashString(s string) string {
+	hf := fnv.New32()
+	hf.Write([]byte(s))
+	return rand.SafeEncodeString(fmt.Sprint(hf.Sum32()))
 }

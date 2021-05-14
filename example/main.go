@@ -91,6 +91,7 @@ func main() {
 			MetadataReader:     store,
 			Clock:              clock.RealClock{},
 			Log:                log,
+			NodeID:             *nodeID,
 			GeneratePrivateKey: (&keygen{store: store}).generatePrivateKey,
 			GenerateRequest:    generateRequest,
 			SignRequest:        signRequest,
