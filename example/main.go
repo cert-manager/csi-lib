@@ -17,7 +17,7 @@ import (
 
 	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
-	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/typed/certmanager/v1"
+	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
 	"github.com/jetstack/cert-manager/pkg/util/pki"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2/klogr"
@@ -87,14 +87,14 @@ func main() {
 		NodeID:        *nodeID,
 		Store:         store,
 		Manager: manager.NewManagerOrDie(manager.Options{
-			CertificateRequestClient: cmclient.NewForConfigOrDie(restConfig),
-			MetadataReader:           store,
-			Clock:                    clock.RealClock{},
-			Log:                      log,
-			GeneratePrivateKey:       (&keygen{store: store}).generatePrivateKey,
-			GenerateRequest:          generateRequest,
-			SignRequest:              signRequest,
-			WriteKeypair:             (&writer{store: store}).writeKeypair,
+			Client:             cmclient.NewForConfigOrDie(restConfig),
+			MetadataReader:     store,
+			Clock:              clock.RealClock{},
+			Log:                log,
+			GeneratePrivateKey: (&keygen{store: store}).generatePrivateKey,
+			GenerateRequest:    generateRequest,
+			SignRequest:        signRequest,
+			WriteKeypair:       (&writer{store: store}).writeKeypair,
 		}),
 	})
 	if err != nil {
