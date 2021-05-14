@@ -179,7 +179,7 @@ func (m *Manager) issue(volumeID string) error {
 	}
 	log.Info("Created new CertificateRequest resource")
 
-	// Poll every 500ms for the CertificateRequest to be ready
+	// Poll every 1s for the CertificateRequest to be ready
 	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
 		updatedReq, err := m.client.CertificateRequests(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
