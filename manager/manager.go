@@ -99,11 +99,15 @@ func NewManager(opts Options) (*Manager, error) {
 	if len(opts.NodeID) == 0 {
 		return nil, errors.New("NodeID must be set")
 	}
+	nodeNameHash := hashString(opts.NodeID)
+	nodeNameReq, err := labels.NewRequirement("csi.cert-manager.io/node-name-hash", selection.Equals, []string{nodeNameHash})
+	if err != nil {
+		return nil, fmt.Errorf("building node name label selector: %w", err)
+	}
 
 	// Create an informer factory
 	informerFactory := cminformers.NewSharedInformerFactoryWithOptions(opts.Client, 0, cminformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
-		// TODO: filter informer
-		opts.LabelSelector = ""
+		opts.LabelSelector = labels.NewSelector().Add(*nodeNameReq).String()
 	}))
 	// Fetch the lister before calling Start() to ensure this informer is
 	// registered with the factory
@@ -129,7 +133,7 @@ func NewManager(opts Options) (*Manager, error) {
 		stopInformer:   stopCh,
 
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
-		nodeNameHash:         hashString(opts.NodeID),
+		nodeNameHash:         nodeNameHash,
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
