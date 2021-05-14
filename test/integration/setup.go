@@ -15,10 +15,10 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
+	fakeclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/fake"
 	"k8s.io/utils/clock"
 
-	fakeclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/fake"
-	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/typed/certmanager/v1"
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/storage"
@@ -29,7 +29,7 @@ type DriverOptions struct {
 	Clock   clock.Clock
 	Store   storage.Interface
 	Log     logr.Logger
-	Client  cmclient.CertmanagerV1Interface
+	Client  cmclient.Interface
 	Mounter mount.Interface
 
 	GeneratePrivateKey manager.GeneratePrivateKeyFunc
@@ -49,7 +49,7 @@ func SetupTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeC
 		opts.Store = storage.NewMemoryFS()
 	}
 	if opts.Client == nil {
-		opts.Client = fakeclient.NewSimpleClientset().CertmanagerV1()
+		opts.Client = fakeclient.NewSimpleClientset()
 	}
 	if opts.Mounter == nil {
 		opts.Mounter = mount.NewFakeMounter(nil)
@@ -60,14 +60,14 @@ func SetupTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeC
 	}
 
 	m := manager.NewManagerOrDie(manager.Options{
-		CertificateRequestClient: opts.Client,
-		MetadataReader:           opts.Store,
-		Clock:                    opts.Clock,
-		Log:                      opts.Log,
-		GeneratePrivateKey:       opts.GeneratePrivateKey,
-		GenerateRequest:          opts.GenerateRequest,
-		SignRequest:              opts.SignRequest,
-		WriteKeypair:             opts.WriteKeypair,
+		Client:             opts.Client,
+		MetadataReader:     opts.Store,
+		Clock:              opts.Clock,
+		Log:                opts.Log,
+		GeneratePrivateKey: opts.GeneratePrivateKey,
+		GenerateRequest:    opts.GenerateRequest,
+		SignRequest:        opts.SignRequest,
+		WriteKeypair:       opts.WriteKeypair,
 	})
 
 	d := driver.NewWithListener(lis, opts.Log, driver.Options{
@@ -102,9 +102,9 @@ func SetupTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeC
 	}
 }
 
-func autoIssueOneRequest(t *testing.T, client cmclient.CertmanagerV1Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
+func autoIssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
 	if err := wait.PollUntil(time.Millisecond*50, func() (done bool, err error) {
-		reqs, err := client.CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
+		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
 			return false, err
 		}
@@ -130,7 +130,7 @@ func autoIssueOneRequest(t *testing.T, client cmclient.CertmanagerV1Interface, n
 		})
 		csr.Status.Certificate = cert
 		csr.Status.CA = ca
-		_, err = client.CertificateRequests(namespace).UpdateStatus(context.TODO(), csr, metav1.UpdateOptions{})
+		_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(context.TODO(), csr, metav1.UpdateOptions{})
 		if err != nil {
 			return false, fmt.Errorf("error updating certificaterequest status: %v", err)
 		}

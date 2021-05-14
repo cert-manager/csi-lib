@@ -11,7 +11,9 @@ import (
 	"github.com/go-logr/logr"
 	apiutil "github.com/jetstack/cert-manager/pkg/api/util"
 	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
-	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned/typed/certmanager/v1"
+	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
+	cminformers "github.com/jetstack/cert-manager/pkg/client/informers/externalversions"
+	cmlisters "github.com/jetstack/cert-manager/pkg/client/listers/certmanager/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -25,8 +27,8 @@ import (
 
 // Options used to construct a Manager
 type Options struct {
-	// Clientset used to interact with the CertificateRequest API
-	CertificateRequestClient cmclient.CertmanagerV1Interface
+	// Client used to interact with the cert-manager API
+	Client cmclient.Interface
 
 	// Used the read metadata from the storage backend
 	MetadataReader storage.MetadataReader
@@ -49,8 +51,8 @@ type Options struct {
 // It will enumerate all volumes already persisted in the metadata store and
 // resume managing them if any already exist.
 func NewManager(opts Options) (*Manager, error) {
-	if opts.CertificateRequestClient == nil {
-		return nil, errors.New("CertificateRequestClient must be set")
+	if opts.Client == nil {
+		return nil, errors.New("Client must be set")
 	}
 	if opts.Clock == nil {
 		opts.Clock = clock.RealClock{}
@@ -74,8 +76,22 @@ func NewManager(opts Options) (*Manager, error) {
 		return nil, errors.New("WriteKeypair must be set")
 	}
 
+	// Create an informer factory
+	informerFactory := cminformers.NewSharedInformerFactoryWithOptions(opts.Client, 0, cminformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+		// TODO: filter informer
+		opts.LabelSelector = ""
+	}))
+	// Fetch the lister before calling Start() to ensure this informer is
+	// registered with the factory
+	lister := informerFactory.Certmanager().V1().CertificateRequests().Lister()
+	stopCh := make(chan struct{})
+	// Begin watching the API
+	informerFactory.Start(stopCh)
+	informerFactory.WaitForCacheSync(stopCh)
+
 	m := &Manager{
-		client:         opts.CertificateRequestClient,
+		client:         opts.Client,
+		lister:         lister,
 		metadataReader: opts.MetadataReader,
 		clock:          opts.Clock,
 		log:            opts.Log,
@@ -86,6 +102,7 @@ func NewManager(opts Options) (*Manager, error) {
 		writeKeypair:       opts.WriteKeypair,
 
 		managedVolumes: map[string]chan struct{}{},
+		stopInformer:   stopCh,
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -121,8 +138,11 @@ func NewManagerOrDie(opts Options) *Manager {
 //
 // It also will trigger renewals of certificates when required.
 type Manager struct {
-	// client used to interact with the cert-manager APIs
-	client cmclient.CertmanagerV1Interface
+	// client used to create & delete objects in the cert-manager API
+	client cmclient.Interface
+
+	// lister is used as a read-only cache of CertificateRequest resources
+	lister cmlisters.CertificateRequestLister
 
 	// used to read metadata from the store
 	metadataReader storage.MetadataReader
@@ -141,6 +161,9 @@ type Manager struct {
 	// the stored channel is used to stop management of the
 	// volume
 	managedVolumes map[string]chan struct{}
+
+	// Used to stop the informer watching for updates
+	stopInformer chan struct{}
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -181,7 +204,7 @@ func (m *Manager) issue(volumeID string) error {
 
 	// Poll every 1s for the CertificateRequest to be ready
 	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
-		updatedReq, err := m.client.CertificateRequests(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			// A NotFound error implies something deleted the resource - fail
 			// early to allow a retry to occur at a later time if needed.
@@ -270,10 +293,25 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 		},
 	}
 
-	req, err := m.client.CertificateRequests(csrBundle.Namespace).Create(ctx, req, metav1.CreateOptions{})
+	req, err := m.client.CertmanagerV1().CertificateRequests(csrBundle.Namespace).Create(ctx, req, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
+
+	// Wait to ensure the lister has observed the creation of the CertificateRequest
+	// This ensures callers that read from the lister/cache do not enter a confused state
+	// where the CertificateRequest does not exist after calling submitRequest due to
+	// cache timing issues.
+	wait.PollUntil(time.Millisecond*50, func() (bool, error) {
+		_, err := m.lister.CertificateRequests(csrBundle.Namespace).Get(req.Name)
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}, ctx.Done())
 
 	return req, nil
 }
@@ -354,6 +392,7 @@ func (m *Manager) IsVolumeReady(volumeID string) bool {
 func (m *Manager) Stop() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
+	close(m.stopInformer)
 	for k, stopCh := range m.managedVolumes {
 		close(stopCh)
 		delete(m.managedVolumes, k)
