@@ -5,7 +5,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"sort"
 	"sync"
 	"time"
@@ -21,11 +20,12 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/clock"
 
+	internalapi "github.com/cert-manager/csi-lib/internal/api"
+	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
 )
@@ -99,8 +99,8 @@ func NewManager(opts Options) (*Manager, error) {
 	if len(opts.NodeID) == 0 {
 		return nil, errors.New("NodeID must be set")
 	}
-	nodeNameHash := hashString(opts.NodeID)
-	nodeNameReq, err := labels.NewRequirement("csi.cert-manager.io/node-name-hash", selection.Equals, []string{nodeNameHash})
+	nodeNameHash := internalapiutil.HashIdentifier(opts.NodeID)
+	nodeNameReq, err := labels.NewRequirement(internalapi.NodeIDHashLabelKey, selection.Equals, []string{nodeNameHash})
 	if err != nil {
 		return nil, fmt.Errorf("building node name label selector: %w", err)
 	}
@@ -340,12 +340,12 @@ func (m *Manager) cleanupStaleRequests(ctx context.Context, volumeID string) err
 
 func (m *Manager) labelSelectorForVolume(volumeID string) (labels.Selector, error) {
 	sel := labels.NewSelector()
-	req, err := labels.NewRequirement("csi.cert-manager.io/node-name-hash", selection.Equals, []string{m.nodeNameHash})
+	req, err := labels.NewRequirement(internalapi.NodeIDHashLabelKey, selection.Equals, []string{m.nodeNameHash})
 	if err != nil {
 		return nil, err
 	}
 	sel.Add(*req)
-	req, err = labels.NewRequirement("csi.cert-manager.io/volume-id", selection.Equals, []string{hashString(volumeID)})
+	req, err = labels.NewRequirement(internalapi.VolumeIDHashLabelKey, selection.Equals, []string{internalapiutil.HashIdentifier(volumeID)})
 	if err != nil {
 		return nil, err
 	}
@@ -368,8 +368,8 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			Namespace:   csrBundle.Namespace,
 			Annotations: csrBundle.Annotations,
 			Labels: map[string]string{
-				"csi.cert-manager.io/node-name-hash": m.nodeNameHash,
-				"csi.cert-manager.io/volume-id":      hashString(meta.VolumeID),
+				internalapi.NodeIDHashLabelKey:   m.nodeNameHash,
+				internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier(meta.VolumeID),
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
@@ -493,10 +493,4 @@ func (m *Manager) Stop() {
 		close(stopCh)
 		delete(m.managedVolumes, k)
 	}
-}
-
-func hashString(s string) string {
-	hf := fnv.New32()
-	hf.Write([]byte(s))
-	return rand.SafeEncodeString(fmt.Sprint(hf.Sum32()))
 }
