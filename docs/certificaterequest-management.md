@@ -43,22 +43,15 @@ resource that is created, and the list/watch will be established using a label s
 
 The full list of new labels to be added to CertificateRequest resources:
 
-* `csi.cert-manager.io/node-name` - the name of the node that the related pod is running on (taken from the
+* `csi.cert-manager.io/node-id-hash` - the ID of the node that the related pod is running on (taken from the
   driver's `DriverID` field). Used to establish efficient watches on the apiserver. Because not all node names
-  are valid label values, this must be hashed to form a valid label value. A suitable hashing function must
-  therefore be chosen. Using the node's hostname value may be an alternative option (as a nodes hostname is
-  already a valid label value) - however this information is not available via the Pod's downward API, meaning
-  the CSI driver would need to `get nodes` on start-up to determine the hostname value for the given node.
-* `csi.cert-manager.io/pod-name` - the name of the pod that the CertificateRequest is created for. Used to
-  allow for efficient cross-referencing of CertificateRequest<>Pod (this is not strictly necessary as owner
-  references are also added to CertificateRequests, but this does make it easier for administrators to debug
-  any issues with issuance too).
-* `csi.cert-manager.io/pod-uid` - the UID of the pod that the CertificateRequest is created for. Used similarly
-  to the `pod-name` label, however, in cases where a pod is deleted and re-created with the same name it is
-  important we have a way to distinguish the two.
-* `csi.cert-manager.io/volume-name` - the name of the volume within the pod that the CertificateRequest is
+  are valid label values, this must be hashed to form a valid label value. `hash/fnv` 32-bit hashes will be used.
+  Any value other than the node name is not suitable here (e.g. hostname), because only
+  the node name is guaranteed to be stable once a Pod is scheduled (i.e. it is encoded into `pod.spec.nodeName`).
+* `csi.cert-manager.io/volume-id-hash` - the name of the volume within the pod that the CertificateRequest is
   created for. This is required because a pod may contain multiple volume mounts, in which case we must maintain
-  a history of CertificateRequests for each volume within the Pod.
+  a history of CertificateRequests for each volume within the Pod. We also hash this with a 32-bit `hash/fnv`
+  function, as volume IDs do not have any character restrictions and therefore may not be valid label values.
 
 When CertificateRequest resources are created, random names will continue to be used. This ensures we avoid any
 conflicts upon re-issuance, and means we do not need explicit naming conflict handling within the driver, simplifying
