@@ -460,6 +460,15 @@ func (m *Manager) ManageVolume(volumeID string) error {
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
 
+	// Create a context that will be cancelled when the stopCh is closed
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-stopCh:
+			cancel()
+		}
+	}()
+
 	go func() {
 		// check every volume once per second
 		// TODO: optimise this to not check so often
@@ -477,13 +486,20 @@ func (m *Manager) ManageVolume(volumeID string) error {
 				}
 
 				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
-					log.Info("Triggering new issuance")
-					if err := m.issue(volumeID); err != nil {
-						log.Error(err, "Failed to issue certificate")
-						// retry the request in 1 second time
-						// TODO: exponentially back-off
-						continue
-					}
+					wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
+						Duration: time.Second * 2,
+						Factor:   2.0,
+						Jitter:   0.5,
+						Steps:    6,
+						Cap:      time.Minute,
+					}, func() (bool, error) {
+						log.Info("Triggering new issuance")
+						if err := m.issue(volumeID); err != nil {
+							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
+							return false, nil
+						}
+						return true, nil
+					})
 				}
 			}
 		}
