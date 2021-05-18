@@ -49,7 +49,7 @@ type Options struct {
 	// volume mounted into a pod.
 	// If not set, this will be defaulted to 3.
 	// When the number of CertificateRequests for a volume exceeds this limit,
-	// requestss will be deleted before any new ones are created.
+	// requests will be deleted before any new ones are created.
 	MaxRequestsPerVolume int
 
 	// NodeID is a unique identifier for the node.
