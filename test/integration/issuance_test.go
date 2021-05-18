@@ -15,12 +15,13 @@ import (
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
+	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
 func TestIssuesCertificate(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
-	opts, cl, stop := SetupTestDriver(t, DriverOptions{
+	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
 		Store: store,
 		Clock: clock,
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
@@ -47,7 +48,7 @@ func TestIssuesCertificate(t *testing.T) {
 	defer stop()
 
 	stopCh := make(chan struct{})
-	go autoIssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	go testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
 	defer close(stopCh)
 
 	tmpDir, err := os.MkdirTemp("", "*")

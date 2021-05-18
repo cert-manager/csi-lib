@@ -1,4 +1,4 @@
-package integration
+package util
 
 import (
 	"context"
@@ -38,7 +38,7 @@ type DriverOptions struct {
 	WriteKeypair       manager.WriteKeypairFunc
 }
 
-func SetupTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
+func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
 	if opts.Log == nil {
 		opts.Log = testlogr.TestLogger{T: t}
 	}
@@ -102,7 +102,7 @@ func SetupTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeC
 	}
 }
 
-func autoIssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
+func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
 	if err := wait.PollUntil(time.Millisecond*50, func() (done bool, err error) {
 		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
 		if err != nil {
