@@ -210,7 +210,7 @@ func (m *Manager) issue(volumeID string) error {
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
 
-	if err := m.cleanupStaleRequests(ctx, volumeID); err != nil {
+	if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 		return fmt.Errorf("cleaning up stale requests: %w", err)
 	}
 
@@ -303,7 +303,7 @@ func (m *Manager) issue(volumeID string) error {
 	return nil
 }
 
-func (m *Manager) cleanupStaleRequests(ctx context.Context, volumeID string) error {
+func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, volumeID string) error {
 	sel, err := m.labelSelectorForVolume(volumeID)
 	if err != nil {
 		return fmt.Errorf("internal error building label selector - this is a bug, please open an issue: %w", err)
@@ -333,6 +333,8 @@ func (m *Manager) cleanupStaleRequests(ctx context.Context, volumeID string) err
 				return fmt.Errorf("deleting old certificaterequest: %w", err)
 			}
 		}
+
+		log.Info("Deleted CertificateRequest resource", "name", toDelete.Name, "namespace", toDelete.Namespace)
 	}
 
 	return nil
