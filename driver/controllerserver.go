@@ -1,5 +1,5 @@
 /*
-Copyright 2021 The Jetstack cert-manager contributors.
+Copyright 2021 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ func (cs *controllerServer) GetCapacity(ctx context.Context, req *csi.GetCapacit
 func (cs *controllerServer) ControllerGetCapabilities(ctx context.Context, req *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	return &csi.ControllerGetCapabilitiesResponse{
 		Capabilities: []*csi.ControllerServiceCapability{
-			&csi.ControllerServiceCapability{
+			{
 				Type: &csi.ControllerServiceCapability_Rpc{
 					Rpc: &csi.ControllerServiceCapability_RPC{
 						Type: csi.ControllerServiceCapability_RPC_UNKNOWN,

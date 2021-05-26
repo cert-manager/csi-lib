@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 # Copyright 2021 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,10 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM alpine:3.11
-LABEL description="cert-manager CSI Driver"
+ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
+cd "$ROOT_DIR"
 
-# Add util-linux to get a new version of losetup.
-RUN apk add util-linux
-COPY ./cert-manager-csi /cert-manager-csi
-ENTRYPOINT ["/cert-manager-csi"]
+./hack/verify-gofmt.sh
+
+go test -race ./...
