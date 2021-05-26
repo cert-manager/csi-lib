@@ -68,6 +68,8 @@ func (m *MemoryFS) ReadMetadata(volumeID string) (metadata.Metadata, error) {
 }
 
 func (m *MemoryFS) ListVolumes() ([]string, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	var vols []string
 	for vol := range m.files {
 		vols = append(vols, vol)
@@ -76,6 +78,8 @@ func (m *MemoryFS) ListVolumes() ([]string, error) {
 }
 
 func (m *MemoryFS) WriteMetadata(volumeID string, meta metadata.Metadata) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	vol, ok := m.files[volumeID]
 	if !ok {
 		return ErrNotFound
@@ -89,6 +93,8 @@ func (m *MemoryFS) WriteMetadata(volumeID string, meta metadata.Metadata) error 
 }
 
 func (m *MemoryFS) RegisterMetadata(meta metadata.Metadata) (bool, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	vol, ok := m.files[meta.VolumeID]
 	if !ok {
 		vol = make(map[string][]byte)
@@ -107,6 +113,8 @@ func (m *MemoryFS) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 }
 
 func (m *MemoryFS) WriteFiles(volumeID string, files map[string][]byte) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	vol, ok := m.files[volumeID]
 	if !ok {
 		return ErrNotFound
@@ -118,6 +126,8 @@ func (m *MemoryFS) WriteFiles(volumeID string, files map[string][]byte) error {
 }
 
 func (m *MemoryFS) ReadFiles(volumeID string) (map[string][]byte, error) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	vol, ok := m.files[volumeID]
 	if !ok {
 		return nil, ErrNotFound
