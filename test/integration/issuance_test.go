@@ -26,8 +26,13 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	fakeclock "k8s.io/utils/clock/testing"
 
+	internalapi "github.com/cert-manager/csi-lib/internal/api"
+	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
@@ -95,5 +100,88 @@ func TestIssuesCertificate(t *testing.T) {
 	}
 	if !reflect.DeepEqual(files["cert"], []byte("certificate bytes")) {
 		t.Errorf("unexpected certificate data: %v", files["cert"])
+	}
+}
+
+func TestManager_CleansUpOldRequests(t *testing.T) {
+	store := storage.NewMemoryFS()
+	clock := fakeclock.NewFakeClock(time.Now())
+	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
+		Store:                store,
+		Clock:                clock,
+		MaxRequestsPerVolume: 1,
+		NodeID:               "node-id",
+		GenerateRequest: func(_ metadata.Metadata) (*manager.CertificateRequestBundle, error) {
+			return &manager.CertificateRequestBundle{
+				Namespace: "testns",
+			}, nil
+		},
+		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
+			store.WriteFiles(meta.VolumeID, map[string][]byte{
+				"ca":   ca,
+				"cert": chain,
+			})
+			nextIssuanceTime := clock.Now().Add(time.Hour)
+			meta.NextIssuanceTime = &nextIssuanceTime
+			return store.WriteMetadata(meta.VolumeID, meta)
+		},
+	})
+	defer stop()
+
+	// precreate a single certificaterequest
+	crLabels := map[string]string{
+		internalapi.NodeIDHashLabelKey:   internalapiutil.HashIdentifier(opts.NodeID),
+		internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier("volume-id"),
+	}
+	cr := &cmapi.CertificateRequest{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-cr",
+			Namespace: "testns",
+			Labels:    crLabels,
+		},
+		Spec:   cmapi.CertificateRequestSpec{},
+		Status: cmapi.CertificateRequestStatus{},
+	}
+	cr, err := opts.Client.CertmanagerV1().CertificateRequests(cr.Namespace).Create(context.TODO(), cr, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up a goroutine that automatically issues all CertificateRequests
+	stopCh := make(chan struct{})
+	go testutil.IssueAllRequests(t, opts.Client, "testns", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	defer close(stopCh)
+
+	// Call NodePublishVolume
+	tmpDir, err := os.MkdirTemp("", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	_, err = cl.NodePublishVolume(context.TODO(), &csi.NodePublishVolumeRequest{
+		VolumeId: "volume-id",
+		VolumeContext: map[string]string{
+			"csi.storage.k8s.io/ephemeral":     "true",
+			"csi.storage.k8s.io/pod.name":      "the-pod-name",
+			"csi.storage.k8s.io/pod.namespace": "testns",
+		},
+		TargetPath: tmpDir,
+		Readonly:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = opts.Client.CertmanagerV1().CertificateRequests("testns").Get(context.TODO(), "test-cr", metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Error("Expected 'test-cr' resource to be deleted but it still exists")
+	}
+
+	all, err := opts.Client.CertmanagerV1().CertificateRequests("testns").List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Items) != 1 {
+		t.Errorf("Expected one CertificateRequest resource to still exist, but there is %d", len(all.Items))
 	}
 }

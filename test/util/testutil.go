@@ -18,6 +18,8 @@ package util
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"testing"
@@ -37,6 +39,7 @@ import (
 
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
+	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
 	testlogr "github.com/cert-manager/csi-lib/test/log"
 )
@@ -47,6 +50,9 @@ type DriverOptions struct {
 	Log     logr.Logger
 	Client  cmclient.Interface
 	Mounter mount.Interface
+
+	NodeID               string
+	MaxRequestsPerVolume int
 
 	GeneratePrivateKey manager.GeneratePrivateKeyFunc
 	GenerateRequest    manager.GenerateRequestFunc
@@ -70,26 +76,52 @@ func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeCli
 	if opts.Mounter == nil {
 		opts.Mounter = mount.NewFakeMounter(nil)
 	}
+	if opts.NodeID == "" {
+		opts.NodeID = "test-node"
+	}
+	if opts.GeneratePrivateKey == nil {
+		opts.GeneratePrivateKey = func(_ metadata.Metadata) (crypto.PrivateKey, error) {
+			return nil, nil
+		}
+	}
+	if opts.GenerateRequest == nil {
+		opts.GenerateRequest = func(_ metadata.Metadata) (*manager.CertificateRequestBundle, error) {
+			return &manager.CertificateRequestBundle{}, nil
+		}
+	}
+	if opts.SignRequest == nil {
+		opts.SignRequest = func(_ metadata.Metadata, _ crypto.PrivateKey, _ *x509.CertificateRequest) ([]byte, error) {
+			return []byte{}, nil
+		}
+	}
+	if opts.WriteKeypair == nil {
+		opts.WriteKeypair = func(_ metadata.Metadata, _ crypto.PrivateKey, _ []byte, _ []byte) error {
+			return nil
+		}
+	}
+
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to setup test listener: %v", err)
 	}
 
 	m := manager.NewManagerOrDie(manager.Options{
-		Client:             opts.Client,
-		MetadataReader:     opts.Store,
-		Clock:              opts.Clock,
-		Log:                opts.Log,
-		GeneratePrivateKey: opts.GeneratePrivateKey,
-		GenerateRequest:    opts.GenerateRequest,
-		SignRequest:        opts.SignRequest,
-		WriteKeypair:       opts.WriteKeypair,
+		Client:               opts.Client,
+		MetadataReader:       opts.Store,
+		Clock:                opts.Clock,
+		Log:                  opts.Log,
+		NodeID:               opts.NodeID,
+		MaxRequestsPerVolume: opts.MaxRequestsPerVolume,
+		GeneratePrivateKey:   opts.GeneratePrivateKey,
+		GenerateRequest:      opts.GenerateRequest,
+		SignRequest:          opts.SignRequest,
+		WriteKeypair:         opts.WriteKeypair,
 	})
 
 	d := driver.NewWithListener(lis, opts.Log, driver.Options{
 		DriverName:    "driver-name",
 		DriverVersion: "v0.0.1",
-		NodeID:        "node-id",
+		NodeID:        opts.NodeID,
 		Store:         opts.Store,
 		Mounter:       opts.Mounter,
 		Manager:       m,
@@ -154,4 +186,35 @@ func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, 
 	}, stopCh); err != nil {
 		t.Errorf("error automatically issuing certificaterequest: %v", err)
 	}
+}
+
+func IssueAllRequests(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
+	wait.Until(func() {
+		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, req := range reqs.Items {
+			if len(req.Status.Certificate) != 0 {
+				continue
+			}
+
+			csr := req.DeepCopy()
+			csr.Status.Conditions = append(req.Status.Conditions, cmapi.CertificateRequestCondition{
+				Type:    cmapi.CertificateRequestConditionReady,
+				Status:  cmmeta.ConditionTrue,
+				Reason:  cmapi.CertificateRequestReasonIssued,
+				Message: "Issued by test",
+			})
+
+			csr.Status.Certificate = cert
+			csr.Status.CA = ca
+			_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(context.TODO(), csr, metav1.UpdateOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+	}, time.Millisecond*50, stopCh)
 }
