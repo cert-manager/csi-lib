@@ -68,13 +68,13 @@ type CertificateRequestBundle struct {
 	Annotations map[string]string
 }
 
-// SignRequestFunc returns the signed CSR bytes (in DER format) for the given
+// SignRequestFunc returns the signed CSR bytes (in PEM format) for the given
 // x509.CertificateRequest.
 // The private key passed to this function is one that is returned by the
 // GeneratePrivateKeyFunc and should be treated as implementation specific.
 // For example, it may be a reference to a location where a private key is
 // stored rather than containing actual private key data.
-type SignRequestFunc func(meta metadata.Metadata, key crypto.PrivateKey, request *x509.CertificateRequest) (csr []byte, err error)
+type SignRequestFunc func(meta metadata.Metadata, key crypto.PrivateKey, request *x509.CertificateRequest) (pem []byte, err error)
 
 // WriteKeypairFunc encodes & persists the output from a completed CertificateRequest
 // into whatever storage backend is provided.

@@ -207,7 +207,15 @@ func generateRequest(meta metadata.Metadata) (*manager.CertificateRequestBundle,
 }
 
 func signRequest(_ metadata.Metadata, key crypto.PrivateKey, request *x509.CertificateRequest) ([]byte, error) {
-	return x509.CreateCertificateRequest(rand.Reader, request, key)
+	csrDer, err := x509.CreateCertificateRequest(rand.Reader, request, key)
+	if err != nil {
+		return nil, err
+	}
+
+	return pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE REQUEST",
+		Bytes: csrDer,
+	}), nil
 }
 
 // writer wraps the storage backend to allow access for writing data

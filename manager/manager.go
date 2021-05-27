@@ -18,7 +18,6 @@ package manager
 
 import (
 	"context"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"sync"
@@ -206,13 +205,13 @@ func (m *Manager) issue(volumeID string) error {
 	}
 	log.V(2).Info("Constructed new CSR")
 
-	csrDer, err := m.signRequest(meta, key, csrBundle.Request)
+	csrPEM, err := m.signRequest(meta, key, csrBundle.Request)
 	if err != nil {
 		return fmt.Errorf("signing certificate signing request: %w", err)
 	}
 	log.V(2).Info("Signed CSR")
 
-	req, err := m.submitRequest(ctx, meta, csrBundle, csrDer)
+	req, err := m.submitRequest(ctx, meta, csrBundle, csrPEM)
 	if err != nil {
 		return fmt.Errorf("submitting request: %w", err)
 	}
@@ -279,13 +278,7 @@ func (m *Manager) issue(volumeID string) error {
 
 // submitRequest will create a CertificateRequest resource and return the
 // created resource.
-func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csrBundle *CertificateRequestBundle, csrDer []byte) (*cmapi.CertificateRequest, error) {
-	// encode the CSR DER in PEM format
-	csrPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: csrDer,
-	})
-
+func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csrBundle *CertificateRequestBundle, csrPEM []byte) (*cmapi.CertificateRequest, error) {
 	req := &cmapi.CertificateRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        string(uuid.NewUUID()),
