@@ -47,7 +47,7 @@ type Options struct {
 
 	// Maximum number of CertificateRequests that should exist for each
 	// volume mounted into a pod.
-	// If not set, this will be defaulted to 3.
+	// If not set, this will be defaulted to 1.
 	// When the number of CertificateRequests for a volume exceeds this limit,
 	// requests will be deleted before any new ones are created.
 	MaxRequestsPerVolume int
@@ -91,7 +91,7 @@ func NewManager(opts Options) (*Manager, error) {
 		return nil, errors.New("WriteKeypair must be set")
 	}
 	if opts.MaxRequestsPerVolume == 0 {
-		opts.MaxRequestsPerVolume = 3
+		opts.MaxRequestsPerVolume = 1
 	}
 	if opts.MaxRequestsPerVolume < 0 {
 		return nil, errors.New("MaxRequestsPerVolume cannot be less than zero")
