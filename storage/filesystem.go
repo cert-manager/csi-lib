@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-logr/logr"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/mount-utils"
 
 	"github.com/cert-manager/csi-lib/metadata"
@@ -156,12 +157,17 @@ func (f *Filesystem) WriteMetadata(volumeID string, meta metadata.Metadata) erro
 }
 
 func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
-	_, err := f.ReadMetadata(meta.VolumeID)
+	existingMeta, err := f.ReadMetadata(meta.VolumeID)
 	if errors.Is(err, ErrNotFound) {
 		if err := os.MkdirAll(f.volumePath(meta.VolumeID), 0644); err != nil {
 			return false, err
 		}
 
+		return true, f.WriteMetadata(meta.VolumeID, meta)
+	}
+
+	if !apiequality.Semantic.DeepEqual(existingMeta.VolumeContext, meta.VolumeContext) {
+		f.log.WithValues("volume_id", meta.VolumeID).Info("volume context changed, updating file system metadata")
 		return true, f.WriteMetadata(meta.VolumeID, meta)
 	}
 

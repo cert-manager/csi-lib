@@ -60,10 +60,11 @@ type MetadataWriter interface {
 	// If the directory for this volume does not exist, it will return an error.
 	WriteMetadata(volumeID string, meta metadata.Metadata) error
 
-	// RegisterMetadata will create a directory for the given metadata and,
-	// if the metadata file does not already exist, persist the given metadata
-	// file.
-	// It will return true if the metadata file has been written, false otherwise.
+	// RegisterMetadata will create a directory for the given metadata and, if
+	// the metadata file does not already exist or volume context has changed,
+	// persist the given metadata file.
+	// It will return true if the metadata file has been written, false
+	// otherwise.
 	RegisterMetadata(meta metadata.Metadata) (bool, error)
 }
 

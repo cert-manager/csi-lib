@@ -47,8 +47,13 @@ import (
 
 // Options used to construct a Manager
 type Options struct {
-	// Client used to interact with the cert-manager API
+	// Client is used to interact with the cert-manager API to list and delete
+	// requests.
 	Client cmclient.Interface
+
+	// CreateClient is used for returning a client that is used for creating
+	// cert-manager API objects. If nil, Client will always be used.
+	CreateClient CreateClientFunc
 
 	// Used the read metadata from the storage backend
 	MetadataReader storage.MetadataReader
@@ -83,6 +88,11 @@ type Options struct {
 func NewManager(opts Options) (*Manager, error) {
 	if opts.Client == nil {
 		return nil, errors.New("Client must be set")
+	}
+	if opts.CreateClient == nil {
+		opts.CreateClient = func(_ metadata.Metadata) (cmclient.Interface, error) {
+			return opts.Client, nil
+		}
 	}
 	if opts.Clock == nil {
 		opts.Clock = clock.RealClock{}
@@ -134,6 +144,7 @@ func NewManager(opts Options) (*Manager, error) {
 
 	m := &Manager{
 		client:         opts.Client,
+		createClient:   opts.CreateClient,
 		lister:         lister,
 		metadataReader: opts.MetadataReader,
 		clock:          opts.Clock,
@@ -184,8 +195,11 @@ func NewManagerOrDie(opts Options) *Manager {
 //
 // It also will trigger renewals of certificates when required.
 type Manager struct {
-	// client used to create & delete objects in the cert-manager API
+	// client used to delete objects in the cert-manager API
 	client cmclient.Interface
+
+	// createClient used to create objects in the cert-manager API
+	createClient CreateClientFunc
 
 	// lister is used as a read-only cache of CertificateRequest resources
 	lister cmlisters.CertificateRequestLister
@@ -400,7 +414,12 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 		},
 	}
 
-	req, err := m.client.CertmanagerV1().CertificateRequests(csrBundle.Namespace).Create(ctx, req, metav1.CreateOptions{})
+	createClient, err := m.createClient(meta)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get create client for %q: %w", meta.VolumeID, err)
+	}
+
+	req, err = createClient.CertmanagerV1().CertificateRequests(csrBundle.Namespace).Create(ctx, req, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
