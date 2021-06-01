@@ -103,6 +103,7 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	if !notMnt {
 		// Nothing more to do if the targetPath is already a bind mount
+		success = true
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
