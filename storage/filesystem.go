@@ -168,7 +168,8 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 
 	if !apiequality.Semantic.DeepEqual(existingMeta.VolumeContext, meta.VolumeContext) {
 		f.log.WithValues("volume_id", meta.VolumeID).Info("volume context changed, updating file system metadata")
-		return true, f.WriteMetadata(meta.VolumeID, meta)
+		existingMeta.VolumeContext = meta.VolumeContext
+		return true, f.WriteMetadata(existingMeta.VolumeID, existingMeta)
 	}
 
 	return false, nil
