@@ -51,9 +51,10 @@ type Options struct {
 	// requests.
 	Client cmclient.Interface
 
-	// CreateClient is used for returning a client that is used for creating
-	// cert-manager API objects. If nil, Client will always be used.
-	CreateClient CreateClientFunc
+	// ClientForMatadataFunc is used for returning a client that is used for
+	// creating cert-manager API objects given a volume's metadata. If nil,
+	// Client will always be used.
+	ClientForMatadata ClientForMatadataFunc
 
 	// Used the read metadata from the storage backend
 	MetadataReader storage.MetadataReader
@@ -89,8 +90,8 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.Client == nil {
 		return nil, errors.New("Client must be set")
 	}
-	if opts.CreateClient == nil {
-		opts.CreateClient = func(_ metadata.Metadata) (cmclient.Interface, error) {
+	if opts.ClientForMatadata == nil {
+		opts.ClientForMatadata = func(_ metadata.Metadata) (cmclient.Interface, error) {
 			return opts.Client, nil
 		}
 	}
@@ -143,12 +144,12 @@ func NewManager(opts Options) (*Manager, error) {
 	informerFactory.WaitForCacheSync(stopCh)
 
 	m := &Manager{
-		client:         opts.Client,
-		createClient:   opts.CreateClient,
-		lister:         lister,
-		metadataReader: opts.MetadataReader,
-		clock:          opts.Clock,
-		log:            opts.Log,
+		client:            opts.Client,
+		clientForMetadata: opts.ClientForMatadata,
+		lister:            lister,
+		metadataReader:    opts.MetadataReader,
+		clock:             opts.Clock,
+		log:               opts.Log,
 
 		generatePrivateKey: opts.GeneratePrivateKey,
 		generateRequest:    opts.GenerateRequest,
@@ -198,8 +199,9 @@ type Manager struct {
 	// client used to delete objects in the cert-manager API
 	client cmclient.Interface
 
-	// createClient used to create objects in the cert-manager API
-	createClient CreateClientFunc
+	// clientForMetadata used to create objects in the cert-manager API given a
+	// volume's metadata
+	clientForMetadata ClientForMatadataFunc
 
 	// lister is used as a read-only cache of CertificateRequest resources
 	lister cmlisters.CertificateRequestLister
@@ -414,7 +416,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 		},
 	}
 
-	createClient, err := m.createClient(meta)
+	createClient, err := m.clientForMetadata(meta)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get create client for %q: %w", meta.VolumeID, err)
 	}

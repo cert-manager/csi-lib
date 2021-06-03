@@ -18,8 +18,11 @@ package storage
 
 import (
 	"encoding/json"
-	"github.com/cert-manager/csi-lib/metadata"
 	"sync"
+
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+
+	"github.com/cert-manager/csi-lib/metadata"
 )
 
 type MemoryFS struct {
@@ -100,15 +103,26 @@ func (m *MemoryFS) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 		vol = make(map[string][]byte)
 		m.files[meta.VolumeID] = vol
 	}
-	metaJSON, ok := vol["metadata.json"]
+
+	existingMetaJSON, ok := vol["metadata.json"]
 	if ok {
-		return false, nil
+		var existingMeta metadata.Metadata
+		if err := json.Unmarshal(existingMetaJSON, &existingMeta); err != nil {
+			return false, err
+		}
+
+		// If the volume context hasn't changed in the existing metadata, no need to write
+		if apiequality.Semantic.DeepEqual(existingMeta.VolumeContext, meta.VolumeContext) {
+			return false, nil
+		}
 	}
+
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {
 		return false, err
 	}
 	vol["metadata.json"] = metaJSON
+
 	return true, nil
 }
 
