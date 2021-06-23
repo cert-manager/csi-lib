@@ -82,7 +82,7 @@ func main() {
 		panic("-endpoint must be set")
 	}
 	if *dataRoot == "" {
-		panic("-data-dir must be set")
+		panic("-data-root must be set")
 	}
 
 	log := klogr.New()
