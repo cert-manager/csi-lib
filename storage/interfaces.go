@@ -71,5 +71,8 @@ type MetadataWriter interface {
 // DataWriter is used to write data (e.g. certificate and private keys) to the
 // storage backend.
 type DataWriter interface {
-	WriteFiles(volumeID string, files map[string][]byte) error
+	// WriteFiles will write the given data to the specified file names in the
+	// volumes data directory. Sets the file user ownership to fsUser UID. If
+	// fsUser is nil, ownership will not change.
+	WriteFiles(volumeID string, files map[string][]byte, fsUser *int64) error
 }
