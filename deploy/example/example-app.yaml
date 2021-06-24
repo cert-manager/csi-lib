@@ -51,6 +51,9 @@ spec:
       labels:
         app: my-csi-app
     spec:
+      securityContext:
+        runAsGroup: 1000
+        runAsUser: 2000
       containers:
         - name: my-frontend
           image: busybox
@@ -67,3 +70,4 @@ spec:
                   csi.cert-manager.io/issuer-name: ca-issuer
                   csi.cert-manager.io/dns-names: my-service.sandbox.svc.cluster.local
                   csi.cert-manager.io/uri-sans: spiffe://my-service.sandbox.cluster.local
+                  csi.cert-manager.io/fs-user: "2000"
