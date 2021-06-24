@@ -60,7 +60,7 @@ func TestIssuesCertificate(t *testing.T) {
 			store.WriteFiles(meta.VolumeID, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
-			})
+			}, nil)
 			nextIssuanceTime := clock.Now().Add(time.Hour)
 			meta.NextIssuanceTime = &nextIssuanceTime
 			return store.WriteMetadata(meta.VolumeID, meta)
@@ -106,6 +106,7 @@ func TestIssuesCertificate(t *testing.T) {
 func TestManager_CleansUpOldRequests(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
+
 	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
 		Store:                store,
 		Clock:                clock,
@@ -120,7 +121,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 			store.WriteFiles(meta.VolumeID, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
-			})
+			}, nil)
 			nextIssuanceTime := clock.Now().Add(time.Hour)
 			meta.NextIssuanceTime = &nextIssuanceTime
 			return store.WriteMetadata(meta.VolumeID, meta)
