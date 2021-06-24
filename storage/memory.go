@@ -126,7 +126,10 @@ func (m *MemoryFS) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	return true, nil
 }
 
-func (m *MemoryFS) WriteFiles(volumeID string, files map[string][]byte) error {
+// WriteFiles writes the given data to virtual files in memory within the
+// volume's data directory. MemoryFS does not support setting user ownership of
+// files.
+func (m *MemoryFS) WriteFiles(volumeID string, files map[string][]byte, _ *int64) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	vol, ok := m.files[volumeID]
