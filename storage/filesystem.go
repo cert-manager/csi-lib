@@ -176,9 +176,20 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	return false, nil
 }
 
-func (f *Filesystem) WriteFiles(volumeID string, files map[string][]byte) error {
-	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0644); err != nil {
+// WriteFiles writes the given data to filesystem files within the volume's
+// data directory. Filesystem supports setting custom fsUser UID to these
+// files.
+func (f *Filesystem) WriteFiles(volumeID string, files map[string][]byte, fsUser *int64) error {
+	// Data directory should be read, write and execute only to the fs user
+	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0700); err != nil {
 		return err
+	}
+
+	// If a fsUser is defined, Chown the directory to that user.
+	if fsUser != nil {
+		if err := os.Chown(f.dataPathForVolumeID(volumeID), int(*fsUser), -1); err != nil {
+			return fmt.Errorf("failed to chown data dir to uid %v: %w", *fsUser, err)
+		}
 	}
 
 	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(volumeID), fmt.Sprintf("volumeID %v", volumeID))
@@ -186,7 +197,7 @@ func (f *Filesystem) WriteFiles(volumeID string, files map[string][]byte) error 
 		return err
 	}
 
-	payload := makePayload(files)
+	payload := makePayload(files, fsUser)
 	return writer.Write(payload)
 }
 
@@ -223,13 +234,13 @@ func (f *Filesystem) tempfsPath() string {
 	return filepath.Join(f.baseDir, "inmemfs")
 }
 
-func makePayload(in map[string][]byte) map[string]util.FileProjection {
+func makePayload(in map[string][]byte, fsUser *int64) map[string]util.FileProjection {
 	out := make(map[string]util.FileProjection, len(in))
 	for name, data := range in {
 		out[name] = util.FileProjection{
-			Data: data,
-			// read-only for user + group (TODO: set fsUser/fsGroup)
-			Mode: readOnlyUserAndGroupFileMode,
+			Data:   data,
+			FsUser: fsUser,
+			Mode:   readOnlyUserAndGroupFileMode,
 		}
 	}
 	return out
