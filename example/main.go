@@ -28,7 +28,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -65,10 +64,12 @@ const (
 
 	RenewBeforeKey  string = "csi.cert-manager.io/renew-before"
 	ReusePrivateKey string = "csi.cert-manager.io/reuse-private-key"
+)
 
-	// fs-user is used to optionally set the UID ownership of the volume's files.
-	// Useful when running containers with a specified user.
-	FsUserKey string = "csi.cert-manager.io/fs-user"
+var (
+	// fs-group is used to optionally set the GID ownership of the volume's
+	// files. Useful when running containers with a specified user and group.
+	FsGroupKey string = "csi.cert-manager.io/fs-group"
 )
 
 var (
@@ -101,6 +102,8 @@ func main() {
 	if err != nil {
 		panic("failed to setup filesystem: " + err.Error())
 	}
+
+	store.FSGroupVolumeAttributeKey = &FsGroupKey
 
 	d, err := driver.New(*endpoint, log, driver.Options{
 		DriverName:    "csi.cert-manager.io",
@@ -255,21 +258,11 @@ func (w *writer) writeKeypair(meta metadata.Metadata, key crypto.PrivateKey, cha
 		return fmt.Errorf("calculating next issuance time: %w", err)
 	}
 
-	var fsUser *int64
-	fsUserStr, ok := meta.VolumeContext[FsUserKey]
-	if ok {
-		i, err := strconv.ParseInt(fsUserStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("failed to parse %q, value must be a valid integer: %w", FsUserKey, err)
-		}
-		fsUser = &i
-	}
-
-	if err := w.store.WriteFiles(meta.VolumeID, map[string][]byte{
+	if err := w.store.WriteFiles(meta, map[string][]byte{
 		pkFile:  keyPEM,
 		crtFile: chain,
 		caFile:  ca,
-	}, fsUser); err != nil {
+	}); err != nil {
 		return fmt.Errorf("writing data: %w", err)
 	}
 
