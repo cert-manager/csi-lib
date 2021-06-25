@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -490,7 +491,11 @@ func (m *Manager) ManageVolume(volumeID string) error {
 						Duration: time.Second * 2,
 						Factor:   2.0,
 						Jitter:   0.5,
-						Steps:    6,
+						// Set this to the maximum int value to avoid resetting the exponential backoff
+						// timer early.
+						// This will mean that once the back-off hits 1 minute, we will constantly retry once
+						// per minute rather than resetting back to `Duration` (2s).
+						Steps:    math.MaxInt32,
 						Cap:      time.Minute,
 					}, func() (bool, error) {
 						log.Info("Triggering new issuance")
