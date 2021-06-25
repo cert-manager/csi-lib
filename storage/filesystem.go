@@ -193,7 +193,7 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 // data directory. Filesystem supports changing ownership of the data directory
 // to a custom gid.
 func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
-	// Data directory should be read, write and execute only to the fs user; read and executable to group
+	// Data directory should be read and execute only to the fs user and group.
 	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0550); err != nil {
 		return err
 	}
@@ -220,17 +220,16 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		return err
 	}
 
-	// If a fsGroup is defined, Chown all files within the data directory.
+	// If a fsGroup is defined, Chown all files just written.
 	if fsGroup != nil {
-		dirName := f.dataPathForVolumeID(meta.VolumeID)
-		entries, err := os.ReadDir(dirName)
-		if err != nil {
-			return fmt.Errorf("failed to list files in data directory: %w", err)
-		}
+		// "..data" is the well-known location where the atomic writer links to the
+		// latest directory containing the files just written. Chown these real
+		// files.
+		dirName := filepath.Join(f.dataPathForVolumeID(meta.VolumeID), "..data")
 
-		for _, entry := range entries {
+		for filename := range files {
 			// Set the uid to -1 which means don't change ownership in Go.
-			if err := os.Chown(filepath.Join(dirName, entry.Name()), -1, int(*fsGroup)); err != nil {
+			if err := os.Chown(filepath.Join(dirName, filename), -1, int(*fsGroup)); err != nil {
 				return err
 			}
 		}
@@ -311,7 +310,7 @@ func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) 
 	// fsGroup has to be between 1 and 4294967295 inclusive. 4294967295 is the
 	// largest gid number on most modern operating systems. If the actual maximum
 	// is smaller on the running machine, then we will simply error later during
-	// the Chmod.
+	// the Chown.
 	if fsGroup <= 0 || fsGroup > 4294967295 {
 		return nil, fmt.Errorf("%q: gid value must be greater than 0 and less than 4294967295: %d", f.FSGroupVolumeAttributeKey, fsGroup)
 	}
