@@ -57,10 +57,10 @@ func TestIssuesCertificate(t *testing.T) {
 			return []byte{}, nil
 		},
 		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
-			store.WriteFiles(meta.VolumeID, map[string][]byte{
+			store.WriteFiles(meta, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
-			}, nil)
+			})
 			nextIssuanceTime := clock.Now().Add(time.Hour)
 			meta.NextIssuanceTime = &nextIssuanceTime
 			return store.WriteMetadata(meta.VolumeID, meta)
@@ -118,10 +118,10 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 			}, nil
 		},
 		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
-			store.WriteFiles(meta.VolumeID, map[string][]byte{
+			store.WriteFiles(meta, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
-			}, nil)
+			})
 			nextIssuanceTime := clock.Now().Add(time.Hour)
 			meta.NextIssuanceTime = &nextIssuanceTime
 			return store.WriteMetadata(meta.VolumeID, meta)
