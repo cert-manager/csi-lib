@@ -117,3 +117,91 @@ func TestFilesystem_ListVolumes(t *testing.T) {
 		t.Errorf("expected only entry to be 'fake-volume' but got: %s", vols[0])
 	}
 }
+
+func Test_fsGroupForMetadata(t *testing.T) {
+	intPtr := func(i int64) *int64 {
+		return &i
+	}
+	strPtr := func(s string) *string {
+		return &s
+	}
+
+	tests := map[string]struct {
+		fixedFSGroup              *int64
+		fsGroupVolumeAttributeKey *string
+		volumeContext             map[string]string
+
+		expGID *int64
+		expErr bool
+	}{
+		"FixedFSGroup=nil FSGroupVolumeAttributeKey=nil, should return nil gid": {
+			fixedFSGroup:              nil,
+			fsGroupVolumeAttributeKey: nil,
+			volumeContext:             map[string]string{},
+			expGID:                    nil,
+			expErr:                    false,
+		},
+		"FixedFSGroup=10 FSGroupVolumeAttributeKey=nil, should return 10": {
+			fixedFSGroup:              intPtr(10),
+			fsGroupVolumeAttributeKey: nil,
+			volumeContext:             map[string]string{},
+			expGID:                    intPtr(10),
+			expErr:                    false,
+		},
+		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined but not present in context, should return nil": {
+			fixedFSGroup:              nil,
+			fsGroupVolumeAttributeKey: strPtr("fs-gid"),
+			volumeContext:             map[string]string{},
+			expGID:                    nil,
+			expErr:                    false,
+		},
+		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context, should return 20": {
+			fixedFSGroup:              nil,
+			fsGroupVolumeAttributeKey: strPtr("fs-gid"),
+			volumeContext: map[string]string{
+				"fs-gid": "20",
+			},
+			expGID: intPtr(20),
+			expErr: false,
+		},
+		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context but with bad value, should return error": {
+			fixedFSGroup:              nil,
+			fsGroupVolumeAttributeKey: strPtr("fs-gid"),
+			volumeContext: map[string]string{
+				"fs-gid": "bad-value",
+			},
+			expGID: nil,
+			expErr: true,
+		},
+		"FixedFSGroup=10 FSGroupVolumeAttributeKey=defined and present in context, should return superseding FixedFSGroup (10)": {
+			fixedFSGroup:              intPtr(10),
+			fsGroupVolumeAttributeKey: strPtr("fs-gid"),
+			volumeContext: map[string]string{
+				"fs-gid": "20",
+			},
+			expGID: intPtr(10),
+			expErr: false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := Filesystem{
+				FixedFSGroup:              test.fixedFSGroup,
+				FSGroupVolumeAttributeKey: test.fsGroupVolumeAttributeKey,
+			}
+
+			gid, err := f.fsGroupForMetadata(metadata.Metadata{
+				VolumeContext: test.volumeContext,
+			})
+
+			if (err != nil) != test.expErr {
+				t.Errorf("unexpected error, exp=%t got=%v", test.expErr, err)
+			}
+
+			if !reflect.DeepEqual(gid, test.expGID) {
+				t.Errorf("unexpected gid, exp=%v got=%v", test.expGID, gid)
+			}
+		})
+	}
+}

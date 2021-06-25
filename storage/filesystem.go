@@ -24,6 +24,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -47,6 +48,18 @@ type Filesystem struct {
 
 	// used by the 'read only' methods
 	fs fs.FS
+
+	// FixedFSGroup is an optional field which will set the gid ownership of all
+	// volume's data directories to this value.
+	// If this value is set, FSGroupVolumeAttributeKey has no effect.
+	FixedFSGroup *int64
+
+	// FSGroupVolumeAttributeKey is an optional well-known key in the volume
+	// attributes. If this attribute is present in the context when writing
+	// files, gid ownership of the volume's data directory will be changed to
+	// the value. Attribute value must be a valid int64 value.
+	// If FixedFSGroup is defined, this field has no effect.
+	FSGroupVolumeAttributeKey *string
 }
 
 // Ensure the Filesystem implementation is fully featured
@@ -177,27 +190,32 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 }
 
 // WriteFiles writes the given data to filesystem files within the volume's
-// data directory. Filesystem supports setting custom fsUser UID to these
-// files.
-func (f *Filesystem) WriteFiles(volumeID string, files map[string][]byte, fsUser *int64) error {
-	// Data directory should be read, write and execute only to the fs user
-	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0700); err != nil {
+// data directory. Filesystem supports changing ownership of the data directory
+// to a custom gid.
+func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
+	// Data directory should be read, write and execute only to the fs user; read and executable to group
+	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0750); err != nil {
 		return err
 	}
 
-	// If a fsUser is defined, Chown the directory to that user.
-	if fsUser != nil {
-		if err := os.Chown(f.dataPathForVolumeID(volumeID), int(*fsUser), -1); err != nil {
-			return fmt.Errorf("failed to chown data dir to uid %v: %w", *fsUser, err)
-		}
-	}
-
-	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(volumeID), fmt.Sprintf("volumeID %v", volumeID))
+	fsGroup, err := f.fsGroupForMetadata(meta)
 	if err != nil {
 		return err
 	}
 
-	payload := makePayload(files, fsUser)
+	// If a fsGroup is defined, Chown the directory to that group.
+	if fsGroup != nil {
+		if err := os.Chown(f.dataPathForVolumeID(meta.VolumeID), -1, int(*fsGroup)); err != nil {
+			return fmt.Errorf("failed to chown data dir to gid %v: %w", *fsGroup, err)
+		}
+	}
+
+	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(meta.VolumeID), fmt.Sprintf("volumeID %v", meta.VolumeID))
+	if err != nil {
+		return err
+	}
+
+	payload := makePayload(files, fsGroup)
 	return writer.Write(payload)
 }
 
@@ -234,14 +252,42 @@ func (f *Filesystem) tempfsPath() string {
 	return filepath.Join(f.baseDir, "inmemfs")
 }
 
-func makePayload(in map[string][]byte, fsUser *int64) map[string]util.FileProjection {
+func makePayload(in map[string][]byte, fsGroup *int64) map[string]util.FileProjection {
 	out := make(map[string]util.FileProjection, len(in))
 	for name, data := range in {
 		out[name] = util.FileProjection{
-			Data:   data,
-			FsUser: fsUser,
-			Mode:   readOnlyUserAndGroupFileMode,
+			Data:    data,
+			FsGroup: fsGroup,
+			Mode:    readOnlyUserAndGroupFileMode,
 		}
 	}
 	return out
+}
+
+// fsGroupForMetadata returns the gid that ownership of the volume data
+// directory should be changed to. Returns nil if ownership should not be
+// changed.
+func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) {
+	// FixedFSGroup takes precedence over attribute key.
+	if f.FixedFSGroup != nil {
+		return f.FixedFSGroup, nil
+	}
+
+	// If the FSGroupVolumeAttributeKey is not defined, no ownership can change.
+	if f.FSGroupVolumeAttributeKey == nil {
+		return nil, nil
+	}
+
+	fsGroupStr, ok := meta.VolumeContext[*f.FSGroupVolumeAttributeKey]
+	if !ok {
+		// If the attribute has not been set, return no ownership change.
+		return nil, nil
+	}
+
+	fsGroup, err := strconv.ParseInt(fsGroupStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %q, value must be a valid integer: %w", *f.FSGroupVolumeAttributeKey, err)
+	}
+
+	return &fsGroup, nil
 }
