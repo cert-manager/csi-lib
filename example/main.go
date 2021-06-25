@@ -64,9 +64,7 @@ const (
 
 	RenewBeforeKey  string = "csi.cert-manager.io/renew-before"
 	ReusePrivateKey string = "csi.cert-manager.io/reuse-private-key"
-)
 
-var (
 	// fs-group is used to optionally set the GID ownership of the volume's
 	// files. Useful when running containers with a specified user and group.
 	FsGroupKey string = "csi.cert-manager.io/fs-group"
@@ -103,7 +101,7 @@ func main() {
 		panic("failed to setup filesystem: " + err.Error())
 	}
 
-	store.FSGroupVolumeAttributeKey = &FsGroupKey
+	store.FSGroupVolumeAttributeKey = FsGroupKey
 
 	d, err := driver.New(*endpoint, log, driver.Options{
 		DriverName:    "csi.cert-manager.io",
