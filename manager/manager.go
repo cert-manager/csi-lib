@@ -488,14 +488,17 @@ func (m *Manager) ManageVolume(volumeID string) error {
 
 				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
 					wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
+						// 2s is the 'base' amount of time for the backoff
 						Duration: time.Second * 2,
+						// We multiple the 'duration' by 2.0 if the attempt fails/errors
 						Factor:   2.0,
+						// Add a jitter of +/- 1s (0.5 of the 'duration')
 						Jitter:   0.5,
-						// Set this to the maximum int value to avoid resetting the exponential backoff
-						// timer early.
-						// This will mean that once the back-off hits 1 minute, we will constantly retry once
-						// per minute rather than resetting back to `Duration` (2s).
+						// 'Steps' controls what the maximum number of backoff attempts is before we
+						// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
+						// reset this unless we get a successful attempt.
 						Steps:    math.MaxInt32,
+						// The maximum time between calls will be 1 minute
 						Cap:      time.Minute,
 					}, func() (bool, error) {
 						log.Info("Triggering new issuance")
