@@ -59,7 +59,7 @@ type Filesystem struct {
 	// files, gid ownership of the volume's data directory will be changed to
 	// the value. Attribute value must be a valid int64 value.
 	// If FixedFSGroup is defined, this field has no effect.
-	FSGroupVolumeAttributeKey *string
+	FSGroupVolumeAttributeKey string
 }
 
 // Ensure the Filesystem implementation is fully featured
@@ -194,7 +194,7 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 // to a custom gid.
 func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
 	// Data directory should be read, write and execute only to the fs user; read and executable to group
-	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0750); err != nil {
+	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0550); err != nil {
 		return err
 	}
 
@@ -215,8 +215,28 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		return err
 	}
 
-	payload := makePayload(files, fsGroup)
-	return writer.Write(payload)
+	payload := makePayload(files)
+	if err := writer.Write(payload); err != nil {
+		return err
+	}
+
+	// If a fsGroup is defined, Chown all files within the data directory.
+	if fsGroup != nil {
+		dirName := f.dataPathForVolumeID(meta.VolumeID)
+		entries, err := os.ReadDir(dirName)
+		if err != nil {
+			return fmt.Errorf("failed to list files in data directory: %w", err)
+		}
+
+		for _, entry := range entries {
+			// Set the uid to -1 which means don't change ownership in Go.
+			if err := os.Chown(filepath.Join(dirName, entry.Name()), -1, int(*fsGroup)); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // ReadFile reads the named file within the volume's data directory.
@@ -252,13 +272,12 @@ func (f *Filesystem) tempfsPath() string {
 	return filepath.Join(f.baseDir, "inmemfs")
 }
 
-func makePayload(in map[string][]byte, fsGroup *int64) map[string]util.FileProjection {
+func makePayload(in map[string][]byte) map[string]util.FileProjection {
 	out := make(map[string]util.FileProjection, len(in))
 	for name, data := range in {
 		out[name] = util.FileProjection{
-			Data:    data,
-			FsGroup: fsGroup,
-			Mode:    readOnlyUserAndGroupFileMode,
+			Data: data,
+			Mode: readOnlyUserAndGroupFileMode,
 		}
 	}
 	return out
@@ -274,11 +293,11 @@ func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) 
 	}
 
 	// If the FSGroupVolumeAttributeKey is not defined, no ownership can change.
-	if f.FSGroupVolumeAttributeKey == nil {
+	if len(f.FSGroupVolumeAttributeKey) == 0 {
 		return nil, nil
 	}
 
-	fsGroupStr, ok := meta.VolumeContext[*f.FSGroupVolumeAttributeKey]
+	fsGroupStr, ok := meta.VolumeContext[f.FSGroupVolumeAttributeKey]
 	if !ok {
 		// If the attribute has not been set, return no ownership change.
 		return nil, nil
@@ -286,7 +305,15 @@ func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) 
 
 	fsGroup, err := strconv.ParseInt(fsGroupStr, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse %q, value must be a valid integer: %w", *f.FSGroupVolumeAttributeKey, err)
+		return nil, fmt.Errorf("failed to parse %q, value must be a valid integer: %w", f.FSGroupVolumeAttributeKey, err)
+	}
+
+	// fsGroup has to be between 1 and 4294967295 inclusive. 4294967295 is the
+	// largest gid number on most modern operating systems. If the actual maximum
+	// is smaller on the running machine, then we will simply error later during
+	// the Chmod.
+	if fsGroup <= 0 || fsGroup > 4294967295 {
+		return nil, fmt.Errorf("%q: gid value must be greater than 0 and less than 4294967295: %d", f.FSGroupVolumeAttributeKey, fsGroup)
 	}
 
 	return &fsGroup, nil
