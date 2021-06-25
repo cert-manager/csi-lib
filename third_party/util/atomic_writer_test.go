@@ -899,7 +899,7 @@ func TestValidatePayload(t *testing.T) {
 	}
 }
 
-func TestCreateGroupVisibleFiles(t *testing.T) {
+func TestCreateUserVisibleFiles(t *testing.T) {
 	cases := []struct {
 		name     string
 		payload  map[string]FileProjection
@@ -960,7 +960,7 @@ func TestCreateGroupVisibleFiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: unexpected error validating payload: %v", tc.name, err)
 		}
-		err = writer.createGroupVisibleFiles(payload)
+		err = writer.createUserVisibleFiles(payload)
 		if err != nil {
 			t.Fatalf("%v: unexpected error creating visible files: %v", tc.name, err)
 		}
