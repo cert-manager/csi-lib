@@ -60,9 +60,10 @@ type AtomicWriter struct {
 
 // FileProjection contains file Data and access Mode
 type FileProjection struct {
-	Data   []byte
-	Mode   int32
-	FsUser *int64
+	Data    []byte
+	Mode    int32
+	FsUser  *int64
+	FsGroup *int64
 }
 
 // NewAtomicWriter creates a new AtomicWriter configured to write to the given
@@ -95,14 +96,14 @@ const (
 //      data to determine if an update is required.
 //  5.  A new timestamped dir is created
 //  6.  The payload is written to the new timestamped directory
-//  7.  Symlinks and directory for new user-visible files are created (if needed).
+//  7.  Symlinks and directory for new user-group-visible files are created (if needed).
 //
 //      For example, consider the files:
 //        <target-dir>/podName
-//        <target-dir>/user/labels
+//        <target-dir>/user-group/labels
 //        <target-dir>/k8s/annotations
 //
-//      The user visible files are symbolic links into the internal data directory:
+//      The user-group visible files are symbolic links into the internal data directory:
 //        <target-dir>/podName         -> ..data/podName
 //        <target-dir>/usr -> ..data/usr
 //        <target-dir>/k8s -> ..data/k8s
@@ -113,7 +114,7 @@ const (
 //  8.  A symlink to the new timestamped directory ..data_tmp is created that will
 //      become the new data directory
 //  9.  The new data directory symlink is renamed to the data directory; rename is atomic
-// 10.  Old paths are removed from the user-visible portion of the target directory
+// 10.  Old paths are removed from the user-group-visible portion of the target directory
 // 11.  The previous timestamped directory is removed, if it exists
 func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 	// (1)
@@ -143,7 +144,7 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 		// (3)
 		pathsToRemove, err = w.pathsToRemove(cleanPayload, oldTsPath)
 		if err != nil {
-			klog.Errorf("%s: error determining user-visible files to remove: %v", w.logContext, err)
+			klog.Errorf("%s: error determining user-group-visible files to remove: %v", w.logContext, err)
 			return err
 		}
 
@@ -175,7 +176,7 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 	klog.V(4).Infof("%s: performed write of new data to ts data directory: %s", w.logContext, tsDir)
 
 	// (7)
-	if err = w.createUserVisibleFiles(cleanPayload); err != nil {
+	if err = w.createGroupVisibleFiles(cleanPayload); err != nil {
 		klog.Errorf("%s: error creating visible symlinks in %s: %v", w.logContext, w.targetDir, err)
 		return err
 	}
@@ -204,7 +205,7 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 	}
 
 	// (10)
-	if err = w.removeUserVisiblePaths(pathsToRemove); err != nil {
+	if err = w.removeGroupVisiblePaths(pathsToRemove); err != nil {
 		klog.Errorf("%s: error removing old visible symlinks: %v", w.logContext, err)
 		return err
 	}
@@ -276,8 +277,8 @@ func validatePath(targetPath string) error {
 
 // shouldWritePayload returns whether the payload should be written to disk.
 func shouldWritePayload(payload map[string]FileProjection, oldTsDir string) (bool, error) {
-	for userVisiblePath, fileProjection := range payload {
-		shouldWrite, err := shouldWriteFile(filepath.Join(oldTsDir, userVisiblePath), fileProjection.Data)
+	for userGroupVisiblePath, fileProjection := range payload {
+		shouldWrite, err := shouldWriteFile(filepath.Join(oldTsDir, userGroupVisiblePath), fileProjection.Data)
 		if err != nil {
 			return false, err
 		}
@@ -355,7 +356,7 @@ func (w *AtomicWriter) newTimestampDir() (string, error) {
 		return "", err
 	}
 
-	// 0755 permissions are needed to allow 'group' and 'other' to recurse the
+	// 0755 permissions are needed to allow 'user' and 'other' to recurse the
 	// directory tree.  do a chmod here to ensure that permissions are set correctly
 	// regardless of the process' umask.
 	err = os.Chmod(tsDir, 0755)
@@ -370,10 +371,10 @@ func (w *AtomicWriter) newTimestampDir() (string, error) {
 // writePayloadToDir writes the given payload to the given directory.  The
 // directory must exist.
 func (w *AtomicWriter) writePayloadToDir(payload map[string]FileProjection, dir string) error {
-	for userVisiblePath, fileProjection := range payload {
+	for userGroupVisiblePath, fileProjection := range payload {
 		content := fileProjection.Data
 		mode := os.FileMode(fileProjection.Mode)
-		fullPath := filepath.Join(dir, userVisiblePath)
+		fullPath := filepath.Join(dir, userGroupVisiblePath)
 		baseDir, _ := filepath.Split(fullPath)
 
 		if err := os.MkdirAll(baseDir, os.ModePerm); err != nil {
@@ -394,11 +395,23 @@ func (w *AtomicWriter) writePayloadToDir(payload map[string]FileProjection, dir 
 			return err
 		}
 
-		if fileProjection.FsUser == nil {
+		// If neither FsUser or FsGroup defined, we don't need to Chown.
+		if fileProjection.FsUser == nil && fileProjection.FsGroup == nil {
 			continue
 		}
-		if err := os.Chown(fullPath, int(*fileProjection.FsUser), -1); err != nil {
-			klog.Errorf("%s: unable to change file %s with owner %v: %v", w.logContext, fullPath, int(*fileProjection.FsUser), err)
+
+		fsUser := -1
+		if fileProjection.FsUser != nil {
+			fsUser = int(*fileProjection.FsUser)
+		}
+
+		fsGroup := -1
+		if fileProjection.FsGroup != nil {
+			fsGroup = int(*fileProjection.FsGroup)
+		}
+
+		if err := os.Chown(fullPath, fsUser, fsGroup); err != nil {
+			klog.Errorf("%s: unable to change file %s with group=%v user=%v owner: %v", w.logContext, fullPath, fsUser, fsGroup, err)
 			return err
 		}
 	}
@@ -406,7 +419,7 @@ func (w *AtomicWriter) writePayloadToDir(payload map[string]FileProjection, dir 
 	return nil
 }
 
-// createUserVisibleFiles creates the relative symlinks for all the
+// createGroupVisibleFiles creates the relative symlinks for all the
 // files configured in the payload. If the directory in a file path does not
 // exist, it is created.
 //
@@ -416,13 +429,13 @@ func (w *AtomicWriter) writePayloadToDir(payload map[string]FileProjection, dir 
 // bar -> ..data/bar
 // foo -> ..data/foo
 // baz -> ..data/baz
-func (w *AtomicWriter) createUserVisibleFiles(payload map[string]FileProjection) error {
-	for userVisiblePath := range payload {
-		slashpos := strings.Index(userVisiblePath, string(os.PathSeparator))
+func (w *AtomicWriter) createGroupVisibleFiles(payload map[string]FileProjection) error {
+	for userGroupVisiblePath := range payload {
+		slashpos := strings.Index(userGroupVisiblePath, string(os.PathSeparator))
 		if slashpos == -1 {
-			slashpos = len(userVisiblePath)
+			slashpos = len(userGroupVisiblePath)
 		}
-		linkname := userVisiblePath[:slashpos]
+		linkname := userGroupVisiblePath[:slashpos]
 		_, err := os.Readlink(filepath.Join(w.targetDir, linkname))
 		if err != nil && os.IsNotExist(err) {
 			// The link into the data directory for this path doesn't exist; create it
@@ -438,9 +451,9 @@ func (w *AtomicWriter) createUserVisibleFiles(payload map[string]FileProjection)
 	return nil
 }
 
-// removeUserVisiblePaths removes the set of paths from the user-visible
+// removeGroupVisiblePaths removes the set of paths from the user-group-visible
 // portion of the writer's target directory.
-func (w *AtomicWriter) removeUserVisiblePaths(paths sets.String) error {
+func (w *AtomicWriter) removeGroupVisiblePaths(paths sets.String) error {
 	ps := string(os.PathSeparator)
 	var lasterr error
 	for p := range paths {
@@ -449,7 +462,7 @@ func (w *AtomicWriter) removeUserVisiblePaths(paths sets.String) error {
 			continue
 		}
 		if err := os.Remove(filepath.Join(w.targetDir, p)); err != nil {
-			klog.Errorf("%s: error pruning old user-visible path %s: %v", w.logContext, p, err)
+			klog.Errorf("%s: error pruning old user-group-visible path %s: %v", w.logContext, p, err)
 			lasterr = err
 		}
 	}
