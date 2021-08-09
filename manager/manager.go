@@ -52,10 +52,10 @@ type Options struct {
 	// requests.
 	Client cmclient.Interface
 
-	// ClientForMatadataFunc is used for returning a client that is used for
+	// ClientForMetadataFunc is used for returning a client that is used for
 	// creating cert-manager API objects given a volume's metadata. If nil,
 	// Client will always be used.
-	ClientForMatadata ClientForMatadataFunc
+	ClientForMetadata ClientForMetadataFunc
 
 	// Used the read metadata from the storage backend
 	MetadataReader storage.MetadataReader
@@ -91,8 +91,8 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.Client == nil {
 		return nil, errors.New("Client must be set")
 	}
-	if opts.ClientForMatadata == nil {
-		opts.ClientForMatadata = func(_ metadata.Metadata) (cmclient.Interface, error) {
+	if opts.ClientForMetadata == nil {
+		opts.ClientForMetadata = func(_ metadata.Metadata) (cmclient.Interface, error) {
 			return opts.Client, nil
 		}
 	}
@@ -146,7 +146,7 @@ func NewManager(opts Options) (*Manager, error) {
 
 	m := &Manager{
 		client:            opts.Client,
-		clientForMetadata: opts.ClientForMatadata,
+		clientForMetadata: opts.ClientForMetadata,
 		lister:            lister,
 		metadataReader:    opts.MetadataReader,
 		clock:             opts.Clock,
@@ -202,7 +202,7 @@ type Manager struct {
 
 	// clientForMetadata used to create objects in the cert-manager API given a
 	// volume's metadata
-	clientForMetadata ClientForMatadataFunc
+	clientForMetadata ClientForMetadataFunc
 
 	// lister is used as a read-only cache of CertificateRequest resources
 	lister cmlisters.CertificateRequestLister
@@ -491,15 +491,15 @@ func (m *Manager) ManageVolume(volumeID string) error {
 						// 2s is the 'base' amount of time for the backoff
 						Duration: time.Second * 2,
 						// We multiple the 'duration' by 2.0 if the attempt fails/errors
-						Factor:   2.0,
+						Factor: 2.0,
 						// Add a jitter of +/- 1s (0.5 of the 'duration')
-						Jitter:   0.5,
+						Jitter: 0.5,
 						// 'Steps' controls what the maximum number of backoff attempts is before we
 						// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
 						// reset this unless we get a successful attempt.
-						Steps:    math.MaxInt32,
+						Steps: math.MaxInt32,
 						// The maximum time between calls will be 1 minute
-						Cap:      time.Minute,
+						Cap: time.Minute,
 					}, func() (bool, error) {
 						log.Info("Triggering new issuance")
 						if err := m.issue(volumeID); err != nil {
