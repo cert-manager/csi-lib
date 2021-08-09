@@ -71,5 +71,5 @@ type MetadataWriter interface {
 // DataWriter is used to write data (e.g. certificate and private keys) to the
 // storage backend.
 type DataWriter interface {
-	WriteFiles(volumeID string, files map[string][]byte) error
+	WriteFiles(meta metadata.Metadata, files map[string][]byte) error
 }

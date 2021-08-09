@@ -126,10 +126,10 @@ func (m *MemoryFS) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	return true, nil
 }
 
-func (m *MemoryFS) WriteFiles(volumeID string, files map[string][]byte) error {
+func (m *MemoryFS) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	vol, ok := m.files[volumeID]
+	vol, ok := m.files[meta.VolumeID]
 	if !ok {
 		return ErrNotFound
 	}

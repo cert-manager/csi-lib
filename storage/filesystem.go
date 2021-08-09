@@ -24,6 +24,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/go-logr/logr"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -47,6 +48,18 @@ type Filesystem struct {
 
 	// used by the 'read only' methods
 	fs fs.FS
+
+	// FixedFSGroup is an optional field which will set the gid ownership of all
+	// volume's data directories to this value.
+	// If this value is set, FSGroupVolumeAttributeKey has no effect.
+	FixedFSGroup *int64
+
+	// FSGroupVolumeAttributeKey is an optional well-known key in the volume
+	// attributes. If this attribute is present in the context when writing
+	// files, gid ownership of the volume's data directory will be changed to
+	// the value. Attribute value must be a valid int64 value.
+	// If FixedFSGroup is defined, this field has no effect.
+	FSGroupVolumeAttributeKey string
 }
 
 // Ensure the Filesystem implementation is fully featured
@@ -176,18 +189,53 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	return false, nil
 }
 
-func (f *Filesystem) WriteFiles(volumeID string, files map[string][]byte) error {
-	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0644); err != nil {
+// WriteFiles writes the given data to filesystem files within the volume's
+// data directory. Filesystem supports changing ownership of the data directory
+// to a custom gid.
+func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
+	// Data directory should be read and execute only to the fs user and group.
+	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0550); err != nil {
 		return err
 	}
 
-	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(volumeID), fmt.Sprintf("volumeID %v", volumeID))
+	fsGroup, err := f.fsGroupForMetadata(meta)
+	if err != nil {
+		return err
+	}
+
+	// If a fsGroup is defined, Chown the directory to that group.
+	if fsGroup != nil {
+		if err := os.Chown(f.dataPathForVolumeID(meta.VolumeID), -1, int(*fsGroup)); err != nil {
+			return fmt.Errorf("failed to chown data dir to gid %v: %w", *fsGroup, err)
+		}
+	}
+
+	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(meta.VolumeID), fmt.Sprintf("volumeID %v", meta.VolumeID))
 	if err != nil {
 		return err
 	}
 
 	payload := makePayload(files)
-	return writer.Write(payload)
+	if err := writer.Write(payload); err != nil {
+		return err
+	}
+
+	// If a fsGroup is defined, Chown all files just written.
+	if fsGroup != nil {
+		// "..data" is the well-known location where the atomic writer links to the
+		// latest directory containing the files just written. Chown these real
+		// files.
+		dirName := filepath.Join(f.dataPathForVolumeID(meta.VolumeID), "..data")
+
+		for filename := range files {
+			// Set the uid to -1 which means don't change ownership in Go.
+			if err := os.Chown(filepath.Join(dirName, filename), -1, int(*fsGroup)); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // ReadFile reads the named file within the volume's data directory.
@@ -228,9 +276,44 @@ func makePayload(in map[string][]byte) map[string]util.FileProjection {
 	for name, data := range in {
 		out[name] = util.FileProjection{
 			Data: data,
-			// read-only for user + group (TODO: set fsUser/fsGroup)
 			Mode: readOnlyUserAndGroupFileMode,
 		}
 	}
 	return out
+}
+
+// fsGroupForMetadata returns the gid that ownership of the volume data
+// directory should be changed to. Returns nil if ownership should not be
+// changed.
+func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) {
+	// FixedFSGroup takes precedence over attribute key.
+	if f.FixedFSGroup != nil {
+		return f.FixedFSGroup, nil
+	}
+
+	// If the FSGroupVolumeAttributeKey is not defined, no ownership can change.
+	if len(f.FSGroupVolumeAttributeKey) == 0 {
+		return nil, nil
+	}
+
+	fsGroupStr, ok := meta.VolumeContext[f.FSGroupVolumeAttributeKey]
+	if !ok {
+		// If the attribute has not been set, return no ownership change.
+		return nil, nil
+	}
+
+	fsGroup, err := strconv.ParseInt(fsGroupStr, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse %q, value must be a valid integer: %w", f.FSGroupVolumeAttributeKey, err)
+	}
+
+	// fsGroup has to be between 1 and 4294967295 inclusive. 4294967295 is the
+	// largest gid number on most modern operating systems. If the actual maximum
+	// is smaller on the running machine, then we will simply error later during
+	// the Chown.
+	if fsGroup <= 0 || fsGroup > 4294967295 {
+		return nil, fmt.Errorf("%q: gid value must be greater than 0 and less than 4294967295: %d", f.FSGroupVolumeAttributeKey, fsGroup)
+	}
+
+	return &fsGroup, nil
 }

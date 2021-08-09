@@ -57,7 +57,7 @@ func TestIssuesCertificate(t *testing.T) {
 			return []byte{}, nil
 		},
 		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
-			store.WriteFiles(meta.VolumeID, map[string][]byte{
+			store.WriteFiles(meta, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
 			})
@@ -106,6 +106,7 @@ func TestIssuesCertificate(t *testing.T) {
 func TestManager_CleansUpOldRequests(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
+
 	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
 		Store:                store,
 		Clock:                clock,
@@ -117,7 +118,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 			}, nil
 		},
 		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
-			store.WriteFiles(meta.VolumeID, map[string][]byte{
+			store.WriteFiles(meta, map[string][]byte{
 				"ca":   ca,
 				"cert": chain,
 			})
