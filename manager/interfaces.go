@@ -84,8 +84,8 @@ type SignRequestFunc func(meta metadata.Metadata, key crypto.PrivateKey, request
 // CertificateRequest, without any attempt to parse or decode the bytes.
 type WriteKeypairFunc func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error
 
-// ClientForMatadataFunc will return a cert-manager API client used for
+// ClientForMetadataFunc will return a cert-manager API client used for
 // creating objects. This is called with the metadata associated with the
 // volume being published. Useful for modifying clients to make use of CSI
 // token requests.
-type ClientForMatadataFunc func(meta metadata.Metadata) (cmclient.Interface, error)
+type ClientForMetadataFunc func(meta metadata.Metadata) (cmclient.Interface, error)
