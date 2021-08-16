@@ -8,6 +8,7 @@ require (
 	github.com/golang/protobuf v1.5.2 // indirect
 	github.com/jetstack/cert-manager v1.3.1
 	github.com/kubernetes-csi/csi-lib-utils v0.9.1
+	github.com/stretchr/testify v1.6.1
 	golang.org/x/net v0.0.0-20210224082022-3d97a244fca7
 	google.golang.org/grpc v1.37.0
 	k8s.io/apimachinery v0.21.0
