@@ -6,7 +6,7 @@ require (
 	github.com/container-storage-interface/spec v1.4.0
 	github.com/go-logr/logr v0.4.0
 	github.com/golang/protobuf v1.5.2 // indirect
-	github.com/jetstack/cert-manager v1.3.1
+	github.com/jetstack/cert-manager v1.7.0-beta.0
 	github.com/kubernetes-csi/csi-lib-utils v0.9.1
 	github.com/stretchr/testify v1.6.1
 	golang.org/x/net v0.0.0-20210224082022-3d97a244fca7
