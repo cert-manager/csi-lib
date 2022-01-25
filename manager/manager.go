@@ -65,7 +65,7 @@ type Options struct {
 	Clock clock.Clock
 
 	// Logger used to write log messages
-	Log logr.Logger
+	Log *logr.Logger
 
 	// Maximum number of CertificateRequests that should exist for each
 	// volume mounted into a pod.
@@ -150,7 +150,7 @@ func NewManager(opts Options) (*Manager, error) {
 		lister:            lister,
 		metadataReader:    opts.MetadataReader,
 		clock:             opts.Clock,
-		log:               opts.Log,
+		log:               *opts.Log,
 
 		generatePrivateKey: opts.GeneratePrivateKey,
 		generateRequest:    opts.GenerateRequest,

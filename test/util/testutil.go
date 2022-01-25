@@ -27,6 +27,7 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr"
+	logrtesting "github.com/go-logr/logr/testing"
 	cmapi "github.com/jetstack/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/jetstack/cert-manager/pkg/apis/meta/v1"
 	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
@@ -41,13 +42,12 @@ import (
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
-	testlogr "github.com/cert-manager/csi-lib/test/log"
 )
 
 type DriverOptions struct {
 	Clock   clock.Clock
 	Store   storage.Interface
-	Log     logr.Logger
+	Log     *logr.Logger
 	Client  cmclient.Interface
 	Mounter mount.Interface
 
@@ -62,7 +62,8 @@ type DriverOptions struct {
 
 func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
 	if opts.Log == nil {
-		opts.Log = testlogr.TestLogger{T: t}
+		logger := logrtesting.NewTestLogger(t)
+		opts.Log = &logger
 	}
 	if opts.Clock == nil {
 		opts.Clock = &clock.RealClock{}
@@ -118,7 +119,7 @@ func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeCli
 		WriteKeypair:         opts.WriteKeypair,
 	})
 
-	d := driver.NewWithListener(lis, opts.Log, driver.Options{
+	d := driver.NewWithListener(lis, *opts.Log, driver.Options{
 		DriverName:    "driver-name",
 		DriverVersion: "v0.0.1",
 		NodeID:        opts.NodeID,
