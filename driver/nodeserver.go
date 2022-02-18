@@ -41,6 +41,8 @@ type nodeServer struct {
 	mounter mount.Interface
 
 	log logr.Logger
+
+	continueOnNotReady bool
 }
 
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
@@ -83,10 +85,17 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	log.Info("Volume registered for management")
 
-	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
-		return ns.manager.IsVolumeReady(req.GetVolumeId()), nil
-	}, ctx.Done()); err != nil {
-		return nil, err
+	// Only wait for the volume to be ready if it is in a state of 'ready to request'
+	// already. This allows implementors to defer actually requesting certificates
+	// until later in the pod lifecycle (e.g. after CNI has run & an IP address has been
+	// allocated, if a user wants to embed pod IPs into their requests).
+	isReadyToRequest := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
+	if isReadyToRequest || !ns.continueOnNotReady {
+		if err := wait.PollUntil(time.Second, func() (done bool, err error) {
+			return ns.manager.IsVolumeReady(req.GetVolumeId()), nil
+		}, ctx.Done()); err != nil {
+			return nil, err
+		}
 	}
 
 	log.Info("Volume ready for mounting")

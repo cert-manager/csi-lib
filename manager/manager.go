@@ -81,6 +81,7 @@ type Options struct {
 	GenerateRequest    GenerateRequestFunc
 	SignRequest        SignRequestFunc
 	WriteKeypair       WriteKeypairFunc
+	ReadyToRequest     ReadyToRequestFunc
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -116,6 +117,9 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	if opts.WriteKeypair == nil {
 		return nil, errors.New("WriteKeypair must be set")
+	}
+	if opts.ReadyToRequest == nil {
+		opts.ReadyToRequest = AlwaysReadyToRequest
 	}
 	if opts.MaxRequestsPerVolume == 0 {
 		opts.MaxRequestsPerVolume = 1
@@ -156,6 +160,7 @@ func NewManager(opts Options) (*Manager, error) {
 		generateRequest:    opts.GenerateRequest,
 		signRequest:        opts.SignRequest,
 		writeKeypair:       opts.WriteKeypair,
+		readyToRequest:     opts.ReadyToRequest,
 
 		managedVolumes: map[string]chan struct{}{},
 		stopInformer:   stopCh,
@@ -218,6 +223,7 @@ type Manager struct {
 	generateRequest    GenerateRequestFunc
 	signRequest        SignRequestFunc
 	writeKeypair       WriteKeypairFunc
+	readyToRequest     ReadyToRequestFunc
 
 	lock sync.Mutex
 	// global view of all volumes managed by this manager
@@ -251,6 +257,10 @@ func (m *Manager) issue(volumeID string) error {
 		return fmt.Errorf("reading metadata: %w", err)
 	}
 	log.V(2).Info("Read metadata", "metadata", meta)
+
+	if !m.readyToRequest(meta) {
+		return fmt.Errorf("driver is not ready to request a certificate for this volume")
+	}
 
 	key, err := m.generatePrivateKey(meta)
 	if err != nil {
@@ -524,6 +534,16 @@ func (m *Manager) UnmanageVolume(volumeID string) {
 		close(stopCh)
 		delete(m.managedVolumes, volumeID)
 	}
+}
+
+func (m *Manager) IsVolumeReadyToRequest(volumeID string) bool {
+	meta, err := m.metadataReader.ReadMetadata(volumeID)
+	if err != nil {
+		m.log.Error(err, "failed to read metadata", "volume_id", volumeID)
+		return false
+	}
+
+	return m.readyToRequest(meta)
 }
 
 func (m *Manager) IsVolumeReady(volumeID string) bool {

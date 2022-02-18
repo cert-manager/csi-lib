@@ -53,11 +53,13 @@ type DriverOptions struct {
 
 	NodeID               string
 	MaxRequestsPerVolume int
+	ContinueOnNotReady   bool
 
 	GeneratePrivateKey manager.GeneratePrivateKeyFunc
 	GenerateRequest    manager.GenerateRequestFunc
 	SignRequest        manager.SignRequestFunc
 	WriteKeypair       manager.WriteKeypairFunc
+	ReadyToRequest     manager.ReadyToRequestFunc
 }
 
 func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
@@ -117,15 +119,17 @@ func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeCli
 		GenerateRequest:      opts.GenerateRequest,
 		SignRequest:          opts.SignRequest,
 		WriteKeypair:         opts.WriteKeypair,
+		ReadyToRequest:       opts.ReadyToRequest,
 	})
 
 	d := driver.NewWithListener(lis, *opts.Log, driver.Options{
-		DriverName:    "driver-name",
-		DriverVersion: "v0.0.1",
-		NodeID:        opts.NodeID,
-		Store:         opts.Store,
-		Mounter:       opts.Mounter,
-		Manager:       m,
+		DriverName:         "driver-name",
+		DriverVersion:      "v0.0.1",
+		NodeID:             opts.NodeID,
+		Store:              opts.Store,
+		Mounter:            opts.Mounter,
+		Manager:            m,
+		ContinueOnNotReady: opts.ContinueOnNotReady,
 	})
 
 	// start the driver
