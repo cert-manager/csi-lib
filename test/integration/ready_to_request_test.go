@@ -39,7 +39,7 @@ import (
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
-func TestCompletesIfNotReadyToRequest(t *testing.T) {
+func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
@@ -48,13 +48,13 @@ func TestCompletesIfNotReadyToRequest(t *testing.T) {
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: true,
-		ReadyToRequest: func(meta metadata.Metadata) bool {
+		ReadyToRequest: func(meta metadata.Metadata) (bool, string) {
 			if calls < 1 {
 				calls++
-				return false
+				return false, "calls < 1"
 			}
 			// only indicate we are ready after issuance has been attempted 1 time
-			return calls == 1
+			return calls == 1, "calls == 1"
 		},
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
 			return nil, nil
@@ -133,8 +133,8 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: false,
-		ReadyToRequest: func(meta metadata.Metadata) bool {
-			return false
+		ReadyToRequest: func(meta metadata.Metadata) (bool, string) {
+			return false, "never ready"
 		},
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
 			return nil, nil

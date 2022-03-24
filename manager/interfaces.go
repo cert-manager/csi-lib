@@ -95,8 +95,8 @@ type ClientForMetadataFunc func(meta metadata.Metadata) (cmclient.Interface, err
 // This can be used to 'defer' fetching until later pod initialization events have
 // happened (e.g. CNI has allocated an IP if you want to embed a pod IP into the certificate
 // request resources).
-type ReadyToRequestFunc func(meta metadata.Metadata) bool
+type ReadyToRequestFunc func(meta metadata.Metadata) (bool, string)
 
-func AlwaysReadyToRequest(_ metadata.Metadata) bool {
-	return true
+func AlwaysReadyToRequest(_ metadata.Metadata) (bool, string) {
+	return true, ""
 }

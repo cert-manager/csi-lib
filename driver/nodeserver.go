@@ -89,13 +89,19 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	// already. This allows implementors to defer actually requesting certificates
 	// until later in the pod lifecycle (e.g. after CNI has run & an IP address has been
 	// allocated, if a user wants to embed pod IPs into their requests).
-	isReadyToRequest := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
+	isReadyToRequest, reason := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
+	if !isReadyToRequest {
+		log.Info("Unable to request a certificate right now, will be retried", "reason", reason)
+	}
 	if isReadyToRequest || !ns.continueOnNotReady {
+		log.Info("Waiting for certificate to be issued...")
 		if err := wait.PollUntil(time.Second, func() (done bool, err error) {
 			return ns.manager.IsVolumeReady(req.GetVolumeId()), nil
 		}, ctx.Done()); err != nil {
 			return nil, err
 		}
+	} else {
+		log.Info("Skipping waiting for certificate to be issued")
 	}
 
 	log.Info("Volume ready for mounting")

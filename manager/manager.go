@@ -258,8 +258,8 @@ func (m *Manager) issue(volumeID string) error {
 	}
 	log.V(2).Info("Read metadata", "metadata", meta)
 
-	if !m.readyToRequest(meta) {
-		return fmt.Errorf("driver is not ready to request a certificate for this volume")
+	if ready, reason := m.readyToRequest(meta); !ready {
+		return fmt.Errorf("driver is not ready to request a certificate for this volume: %v", reason)
 	}
 
 	key, err := m.generatePrivateKey(meta)
@@ -536,11 +536,11 @@ func (m *Manager) UnmanageVolume(volumeID string) {
 	}
 }
 
-func (m *Manager) IsVolumeReadyToRequest(volumeID string) bool {
+func (m *Manager) IsVolumeReadyToRequest(volumeID string) (bool, string) {
 	meta, err := m.metadataReader.ReadMetadata(volumeID)
 	if err != nil {
 		m.log.Error(err, "failed to read metadata", "volume_id", volumeID)
-		return false
+		return false, ""
 	}
 
 	return m.readyToRequest(meta)
