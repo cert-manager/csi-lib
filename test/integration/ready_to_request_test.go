@@ -185,14 +185,18 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 		t.Errorf("Expected timeout to be returned from NodePublishVolume but got: %v", err)
 	}
 
-	files, err := store.ReadFiles("test-vol")
-	if err != nil {
-		t.Errorf("failed to read files: %v", err)
-	}
-	if len(files["ca"]) > 0 {
-		t.Errorf("unexpected CA data: %v", files["ca"])
-	}
-	if len(files["cert"]) > 0 {
-		t.Errorf("unexpected certificate data: %v", files["cert"])
+	// allow 1s for the cleanup functions in NodePublishVolume to be run
+	// without this pause, the test can flake due to the storage backend not
+	// being cleaned up of the persisted metadata file.
+	ctx, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	if wait.PollUntil(time.Millisecond*100, func() (bool, error) {
+		_, err := store.ReadFiles("test-vol")
+		if err != storage.ErrNotFound {
+			return false, nil
+		}
+		return true, nil
+	}, ctx.Done()); err != nil {
+		t.Errorf("failed to wait for storage backend to return NotFound: %v", err)
 	}
 }
