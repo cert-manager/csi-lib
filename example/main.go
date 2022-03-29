@@ -112,7 +112,7 @@ func main() {
 			Client:             cmclient.NewForConfigOrDie(restConfig),
 			MetadataReader:     store,
 			Clock:              clock.RealClock{},
-			Log:                log,
+			Log:                &log,
 			NodeID:             *nodeID,
 			GeneratePrivateKey: (&keygen{store: store}).generatePrivateKey,
 			GenerateRequest:    generateRequest,
