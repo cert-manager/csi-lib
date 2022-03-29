@@ -52,6 +52,16 @@ type Options struct {
 	// If not specified, the current operating system's default implementation
 	// will be used (i.e. 'mount.New("")')
 	Mounter mount.Interface
+	// ContinueOnNotReady will cause the driver's nodeserver to continue
+	// mounting the volume even if the driver is not ready to create a request yet.
+	// This is useful if you need to defer requesting a certificate until after
+	// initialization of the Pod (e.g. IPAM so a pod IP is allocated).
+	// Enabling this option WILL cause a period of time during pod startup whereby
+	// certificate data is not available in the volume whilst the process is running.
+	// An `initContainer` or other special logic in the user application must be
+	// added to avoid running into CrashLoopBackOff situations which can delay pod
+	// start time.
+	ContinueOnNotReady bool
 }
 
 func New(endpoint string, log logr.Logger, opts Options) (*Driver, error) {
@@ -75,11 +85,12 @@ func buildServers(opts Options, log logr.Logger) (*identityServer, *controllerSe
 		opts.Mounter = mount.New("")
 	}
 	return NewIdentityServer(opts.DriverName, opts.DriverVersion), &controllerServer{}, &nodeServer{
-		log:     log,
-		nodeID:  opts.NodeID,
-		manager: opts.Manager,
-		store:   opts.Store,
-		mounter: opts.Mounter,
+		log:                log,
+		nodeID:             opts.NodeID,
+		manager:            opts.Manager,
+		store:              opts.Store,
+		mounter:            opts.Mounter,
+		continueOnNotReady: opts.ContinueOnNotReady,
 	}
 }
 

@@ -146,5 +146,10 @@ func (m *MemoryFS) ReadFiles(volumeID string) (map[string][]byte, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return vol, nil
+	// make a copy of the map to ensure no races can occur
+	cpy := make(map[string][]byte)
+	for k, v := range vol {
+		cpy[k] = v
+	}
+	return cpy, nil
 }

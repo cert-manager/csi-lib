@@ -124,7 +124,7 @@ func (f *Filesystem) ListVolumes() ([]string, error) {
 	return vols, nil
 }
 
-// MetadataForVolume will return the metadata for the volume with the given ID.
+// ReadMetadata will return the metadata for the volume with the given ID.
 // Errors wrapping ErrNotFound will be returned if metadata for the ID cannot
 // be found.
 func (f *Filesystem) ReadMetadata(volumeID string) (metadata.Metadata, error) {
