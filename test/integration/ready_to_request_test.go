@@ -189,7 +189,7 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	// being cleaned up of the persisted metadata file.
 	ctx, cancel2 := context.WithTimeout(context.Background(), time.Second)
 	defer cancel2()
-	if wait.PollUntil(time.Millisecond*100, func() (bool, error) {
+	if err := wait.PollUntil(time.Millisecond*100, func() (bool, error) {
 		_, err := store.ReadFiles("test-vol")
 		if err != storage.ErrNotFound {
 			return false, nil
