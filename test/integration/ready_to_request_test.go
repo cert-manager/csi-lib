@@ -163,13 +163,12 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	stopCh := make(chan struct{})
 	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
 	defer close(stopCh)
-
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "test-vol",
