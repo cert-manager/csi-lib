@@ -172,29 +172,66 @@ func (f *Filesystem) WriteMetadata(volumeID string, meta metadata.Metadata) erro
 func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	existingMeta, err := f.ReadMetadata(meta.VolumeID)
 	if errors.Is(err, ErrNotFound) {
-		if err := os.MkdirAll(f.volumePath(meta.VolumeID), 0644); err != nil {
+		// Ensure directory structure for the volume exists
+		if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
 			return false, err
 		}
 
-		return true, f.WriteMetadata(meta.VolumeID, meta)
+		if err := f.WriteMetadata(meta.VolumeID, meta); err != nil {
+			return false, err
+		}
+
+		return true, nil
 	}
 
 	// If the volume context has changed, should write updated metadata
 	if !apiequality.Semantic.DeepEqual(existingMeta.VolumeContext, meta.VolumeContext) {
+		// Ensure directory structure for the volume exists - this will probably do
+		// nothing, but it helps avoid any weird edge cases we could find ourselves in &
+		// is an inexpensive operation.
+		if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
+			return false, err
+		}
+
 		f.log.WithValues("volume_id", meta.VolumeID).Info("volume context changed, updating file system metadata")
 		existingMeta.VolumeContext = meta.VolumeContext
-		return true, f.WriteMetadata(existingMeta.VolumeID, existingMeta)
+		if err := f.WriteMetadata(existingMeta.VolumeID, existingMeta); err != nil {
+			return false, err
+		}
+
+		return true, nil
 	}
 
 	return false, nil
+}
+
+// ensureVolumeDirectory ensures the directory structure for the volume exists.
+// If the directories already exist, it will do nothing.
+func (f *Filesystem) ensureVolumeDirectory(volumeID string) error {
+	if err := os.MkdirAll(f.volumePath(volumeID), 0644); err != nil {
+		return err
+	}
+
+	// Data directory should be read and execute only to the fs user and group.
+	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0550); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // WriteFiles writes the given data to filesystem files within the volume's
 // data directory. Filesystem supports changing ownership of the data directory
 // to a custom gid.
 func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
-	// Data directory should be read and execute only to the fs user and group.
-	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), 0550); err != nil {
+	// Ensure the full directory structure for the volume exists.
+	// This already happens in RegisterMetadata, however, when a driver starts up and reads
+	// the metadata files from the existing tmpfs to re-populate the manager, RegisterMetadata
+	// is not called again (it is only invoked by driver/nodeserver.go when a pod is first processed
+	// during NodePublishVolume).
+	// There is a very slim chance we could end out in a weird situation where the metadata
+	// file exists but the data directory does not, so re-run ensureVolumeDirectory just to be safe.
+	if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
 		return err
 	}
 
