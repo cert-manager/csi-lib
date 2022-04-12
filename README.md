@@ -1,7 +1,7 @@
 # cert-manager-csi-lib
 
 > A library for building [CSI drivers](https://kubernetes-csi.github.io/docs/)
-> that interact with [cert-manager's](https://github.com/jetstack/cert-manager)
+> that interact with [cert-manager's](https://github.com/cert-manager/cert-manager)
 > CertificateRequest API.
 
 ## Introduction

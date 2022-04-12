@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 
-	cmclient "github.com/jetstack/cert-manager/pkg/client/clientset/versioned"
+	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"k8s.io/client-go/rest"
 
 	"github.com/cert-manager/csi-lib/manager"
