@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/cert-manager/cert-manager/d7a3a3976785bd5717d9d06b115878feaf257597/logo/logo.png" height="241" width="250" alt="cert-manager project logo" />
+</p>
+
 # cert-manager-csi-lib
 
 > A library for building [CSI drivers](https://kubernetes-csi.github.io/docs/)
