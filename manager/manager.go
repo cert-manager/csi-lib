@@ -388,12 +388,12 @@ func (m *Manager) labelSelectorForVolume(volumeID string) (labels.Selector, erro
 	if err != nil {
 		return nil, err
 	}
-	sel.Add(*req)
+	sel = sel.Add(*req)
 	req, err = labels.NewRequirement(internalapi.VolumeIDHashLabelKey, selection.Equals, []string{internalapiutil.HashIdentifier(volumeID)})
 	if err != nil {
 		return nil, err
 	}
-	sel.Add(*req)
+	sel = sel.Add(*req)
 	return sel, nil
 }
 
