@@ -6,7 +6,7 @@ import (
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	testpkg "github.com/cert-manager/cert-manager/pkg/controller/test"
-	logrtesting "github.com/go-logr/logr/testing"
+	"github.com/go-logr/logr/testr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	coretesting "k8s.io/client-go/testing"
@@ -18,7 +18,7 @@ import (
 func TestManager_cleanupStaleRequests(t *testing.T) {
 
 	ctx := context.TODO()
-	log := logrtesting.NewTestLogger(t)
+	log := testr.New(t)
 
 	type fields struct {
 		nodeNameHash         string

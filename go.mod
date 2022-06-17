@@ -1,15 +1,15 @@
 module github.com/cert-manager/csi-lib
 
-go 1.17
+go 1.18
 
 require (
-	github.com/cert-manager/cert-manager v1.8.0
-	github.com/container-storage-interface/spec v1.4.0
-	github.com/go-logr/logr v1.2.0
-	github.com/kubernetes-csi/csi-lib-utils v0.9.1
+	github.com/cert-manager/cert-manager v1.8.1
+	github.com/container-storage-interface/spec v1.6.0
+	github.com/go-logr/logr v1.2.3
+	github.com/kubernetes-csi/csi-lib-utils v0.11.0
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/net v0.0.0-20220107192237-5cfca573fb4d
-	google.golang.org/grpc v1.43.0
+	golang.org/x/net v0.0.0-20220615171555-694bf12d69de
+	google.golang.org/grpc v1.47.0
 	k8s.io/apimachinery v0.23.4
 	k8s.io/client-go v0.23.4
 	k8s.io/klog/v2 v2.30.0
@@ -69,7 +69,7 @@ require (
 	go.uber.org/zap v1.19.1 // indirect
 	golang.org/x/crypto v0.0.0-20211117183948-ae814b36b871 // indirect
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8 // indirect
-	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e // indirect
+	golang.org/x/sys v0.0.0-20220520151302-bc2c85ada10a // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac // indirect
