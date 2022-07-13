@@ -408,6 +408,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			Labels: map[string]string{
 				internalapi.NodeIDHashLabelKey:   m.nodeNameHash,
 				internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier(meta.VolumeID),
+				internalapi.PodUIDLabelKey:       meta.VolumeContext["csi.storage.k8s.io/pod.uid"],
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
