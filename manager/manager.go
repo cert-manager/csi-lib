@@ -411,7 +411,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			},
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: "core/v1",
+					APIVersion: "v1",
 					Kind:       "Pod",
 					Name:       meta.VolumeContext["csi.storage.k8s.io/pod.name"],
 					UID:        types.UID(meta.VolumeContext["csi.storage.k8s.io/pod.uid"]),
