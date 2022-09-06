@@ -243,8 +243,7 @@ type Manager struct {
 }
 
 // issue will step through the entire issuance flow for a volume.
-func (m *Manager) issue(volumeID string) error {
-	ctx := context.TODO()
+func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
 
@@ -512,7 +511,7 @@ func (m *Manager) ManageVolume(volumeID string) error {
 						Cap: time.Minute,
 					}, func() (bool, error) {
 						log.Info("Triggering new issuance")
-						if err := m.issue(volumeID); err != nil {
+						if err := m.issue(ctx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							return false, nil
 						}
