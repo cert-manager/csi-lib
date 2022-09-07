@@ -20,4 +20,4 @@ cd "$ROOT_DIR"
 ./hack/verify-gofmt.sh
 ./hack/verify-boilerplate.sh
 
-go test -race ./...
+go test -race $(go list ./... | grep -v test/e2e)
