@@ -37,9 +37,7 @@ delete_cluster() {
   kind delete cluster --name cert-manager-csi-e2e
 }
 
-for cmd in ginkgo docker kind kubectl helm nix csi-lib-e2e; do
-  check_command $cmd
-done
+for cmd in ginkgo docker kind kubectl helm nix csi-lib-e2e; do check_command $cmd; done
 
 ginkgo version
 kind version
