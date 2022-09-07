@@ -80,7 +80,7 @@ spec:
             capabilities:
               add: ["SYS_ADMIN"]
             allowPrivilegeEscalation: true
-          image: cert-manager-csi
+          image: cert-manager-csi:example
           imagePullPolicy: "Never"
           args :
             - --node-id=$(NODE_ID)
