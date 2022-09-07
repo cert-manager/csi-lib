@@ -38,7 +38,7 @@
         src = pkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
         vendorSha256 = "sha256-3pNKmR+yKIf/15eftJyHD7m7LerFbZ2m+N6zxVXz2sU=";
 
-        kindVersion = "v0.15.0";
+        kindVersion = "0.15.0";
         kindHash = "sha256-IDSWmNWHnTKOl6/N1Mz+OKOkZSBarpuN39CBsSjYhKY=";
         kindVendorSha256 = "sha256-FE1GvNgXkBt2cH4YB3jTsPXp91DSiYlniQLtMwvi384=";
 
