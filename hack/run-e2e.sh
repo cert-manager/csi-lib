@@ -18,13 +18,28 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.9.1}"
+
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
-CERT_MANAGER_VERSION="v1.9.1"
 cd "$ROOT_DIR"
+
+check_command() {
+  if ! [ -x "$(command -v $1)" ]; then
+    echo "Error: $1 is not installed." >&2
+    echo "Invoke script using 'nix develop -c ./hack/run.sh'" >&2
+    echo "https://nixos.org/download.html" >&2
+    exit 1
+  fi
+}
 
 delete_cluster() {
   kind delete cluster --name cert-manager-csi-e2e
 }
+
+for cmd in ginkgo docker kind kubectl helm nix csi-lib-e2e; do
+  check_command $cmd
+done
 
 ginkgo version
 kind version
@@ -33,15 +48,26 @@ echo "kubectl $(kubectl version --client)"
 echo "docker"
 docker version
 
-nix build .#docker
+echo "> Creating cluster..."
 kind create cluster --name cert-manager-csi-e2e
 trap delete_cluster EXIT
-kind load image-archive <(gzip --decompress --stdout result) --name cert-manager-csi-e2e
+
+echo "> Loading csi-lib docker container..."
+nix build .#container
+kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout result)
+
+echo "> Installing cert-manager..."
 helm repo add --force-update jetstack https://charts.jetstack.io
 helm upgrade -i cert-manager jetstack/cert-manager --set installCRDs=true --version $CERT_MANAGER_VERSION -n cert-manager --create-namespace --wait
+
+echo "> Installing csi-driver..."
 kubectl apply -f ./deploy/cert-manager-csi-driver.yaml
 kubectl apply -f ./deploy/example
 kubectl get pods -A
-echo "Waiting for all pods to be ready..."
+
+echo "> Waiting for all pods to be ready..."
 kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m
+
+
+echo "> Running tests"
 csi-lib-e2e
