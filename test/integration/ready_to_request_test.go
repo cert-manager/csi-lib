@@ -180,8 +180,8 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 		TargetPath: tmpDir,
 		Readonly:   true,
 	})
-	if status.Code(err) != codes.DeadlineExceeded {
-		t.Errorf("Expected timeout to be returned from NodePublishVolume but got: %v", err)
+	if status.Code(err) != codes.Unknown || err.Error() != "rpc error: code = Unknown desc = volume is not yet ready to be setup, will be retried: never ready" {
+		t.Errorf("unexpected error: %v", err)
 	}
 
 	// allow 1s for the cleanup functions in NodePublishVolume to be run

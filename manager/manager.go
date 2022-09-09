@@ -454,21 +454,66 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 	return req, nil
 }
 
-// ManageVolume will initiate management of data for the given volumeID.
-func (m *Manager) ManageVolume(volumeID string) error {
+// ManageVolumeImmediate will register a volume for management and immediately attempt a single issuance.
+// This
+func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (managed bool, err error) {
+	if !m.manageVolumeIfNotManaged(volumeID) {
+		return false, nil
+	}
+
+	meta, err := m.metadataReader.ReadMetadata(volumeID)
+	if err != nil {
+		return true, fmt.Errorf("reading metadata: %w", err)
+	}
+
+	// Only attempt issuance immediately if there isn't already an issued certificate
+	if meta.NextIssuanceTime == nil {
+		// If issuance fails, immediately return without retrying so the caller can decide
+		// how to proceed depending on the context this method was called within.
+		if err := m.issue(ctx, volumeID); err != nil {
+			return true, err
+		}
+	}
+
+	if !m.startRenewalRoutine(volumeID) {
+		return true, fmt.Errorf("unexpected state: renewal routine not started, please open an issue at https://github.com/cert-manager/csi-lib")
+	}
+
+	return true, nil
+}
+
+// manageVolumeIfNotManaged will ensure the named volume has been registered for management.
+// It returns 'true' if the volume was not previously managed, and false if the volume was already managed.
+func (m *Manager) manageVolumeIfNotManaged(volumeID string) (managed bool) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	log := m.log.WithValues("volume_id", volumeID)
 
 	// if the volume is already managed, return early
-	if _, ok := m.managedVolumes[volumeID]; ok {
+	if _, managed := m.managedVolumes[volumeID]; managed {
 		log.V(2).Info("Volume already registered for management")
-		return nil
+		return false
 	}
 
 	// construct a new channel used to stop management of the volume
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
+
+	return true
+}
+
+// startRenewalRoutine will begin the background issuance goroutine for the given volumeID.
+// It is the caller's responsibility to ensure this is only called once per volume.
+func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	log := m.log.WithValues("volume_id", volumeID)
+
+	stopCh, ok := m.managedVolumes[volumeID]
+	if !ok {
+		log.Info("Volume not registered for management, cannot start renewal routine...")
+		return false
+	}
 
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -481,7 +526,6 @@ func (m *Manager) ManageVolume(volumeID string) error {
 
 	go func() {
 		// check every volume once per second
-		// TODO: optimise this to not check so often
 		ticker := time.NewTicker(time.Second)
 		for {
 			select {
@@ -496,9 +540,14 @@ func (m *Manager) ManageVolume(volumeID string) error {
 				}
 
 				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
-					wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
-						// 2s is the 'base' amount of time for the backoff
-						Duration: time.Second * 2,
+					// If issuing a certificate fails, we don't go around the outer for loop again (as we'd then be creating
+					// a new CertificateRequest every second).
+					// Instead, retry within the same iteration of the for loop and apply an exponential backoff.
+					// Because we pass ctx through to the 'wait' package, if the stopCh is closed/context is cancelled,
+					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
+					if err := wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
+						// 8s is the 'base' amount of time for the backoff
+						Duration: time.Second * 8,
 						// We multiple the 'duration' by 2.0 if the attempt fails/errors
 						Factor: 2.0,
 						// Add a jitter of +/- 1s (0.5 of the 'duration')
@@ -507,8 +556,8 @@ func (m *Manager) ManageVolume(volumeID string) error {
 						// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
 						// reset this unless we get a successful attempt.
 						Steps: math.MaxInt32,
-						// The maximum time between calls will be 1 minute
-						Cap: time.Minute,
+						// The maximum time between calls will be 5 minutes
+						Cap: time.Minute * 5,
 					}, func() (bool, error) {
 						log.Info("Triggering new issuance")
 						if err := m.issue(ctx, volumeID); err != nil {
@@ -516,13 +565,30 @@ func (m *Manager) ManageVolume(volumeID string) error {
 							return false, nil
 						}
 						return true, nil
-					})
+					}); err != nil {
+						if errors.Is(err, wait.ErrWaitTimeout) || errors.Is(err, context.DeadlineExceeded) {
+							continue
+						}
+						// this should never happen as the function above never actually returns errors
+						log.Error(err, "unexpected error")
+					}
 				}
 			}
 		}
 	}()
+	return true
+}
 
-	return nil
+// ManageVolume will initiate management of data for the given volumeID.
+func (m *Manager) ManageVolume(volumeID string) (managed bool) {
+	log := m.log.WithValues("volume_id", volumeID)
+	if managed := m.manageVolumeIfNotManaged(volumeID); !managed {
+		return false
+	}
+	if started := m.startRenewalRoutine(volumeID); !started {
+		log.Info("unexpected state: renewal routine not started, please open an issue at https://github.com/cert-manager/csi-lib")
+	}
+	return true
 }
 
 func (m *Manager) UnmanageVolume(volumeID string) {
@@ -546,6 +612,13 @@ func (m *Manager) IsVolumeReadyToRequest(volumeID string) (bool, string) {
 }
 
 func (m *Manager) IsVolumeReady(volumeID string) bool {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	// a volume is not classed as Ready if it is not managed
+	if _, managed := m.managedVolumes[volumeID]; !managed {
+		return false
+	}
+
 	meta, err := m.metadataReader.ReadMetadata(volumeID)
 	if err != nil {
 		m.log.Error(err, "failed to read metadata", "volume_id", volumeID)
