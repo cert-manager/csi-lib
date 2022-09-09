@@ -175,10 +175,27 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 
 	for _, vol := range vols {
-		m.log.Info("Registering existing data directory for management", "volume", vol)
-		if err := m.ManageVolume(vol); err != nil {
-			return nil, fmt.Errorf("loading existing volume: %w", err)
+		log := m.log.WithValues("volume_id", vol)
+		meta, err := opts.MetadataReader.ReadMetadata(vol)
+		if err != nil {
+			// This implies something has modified the state store whilst we are starting up
+			// return the error and hope that next time we startup, nothing else changes the filesystem
+			return nil, fmt.Errorf("reading existing volume metadata: %w", err)
 		}
+		if meta.NextIssuanceTime == nil {
+			// This implies that a successful issuance has never been completed for this volume.
+			// don't register these volumes for management automatically as they could be leftover
+			// from a previous instance of the CSI driver handling a NodePublishVolume call that was
+			// not able to clean up the state store before an unexpected exit.
+			// Whatever is calling the CSI plugin should call NodePublishVolume again relatively soon
+			// after we start up, which will trigger management to resume.
+			// TODO: we should probably consider deleting the volume from the state store in these instances
+			//       to avoid having leftover metadata files for pods that don't actually exist anymore.
+			log.Info("Skipping management of volume that has never successfully completed")
+			continue
+		}
+		log.Info("Registering existing data directory for management", "volume", vol)
+		m.ManageVolume(vol)
 	}
 
 	return m, nil
