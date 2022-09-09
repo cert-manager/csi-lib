@@ -189,6 +189,12 @@ func NewManager(opts Options) (*Manager, error) {
 			// not able to clean up the state store before an unexpected exit.
 			// Whatever is calling the CSI plugin should call NodePublishVolume again relatively soon
 			// after we start up, which will trigger management to resume.
+			// Note: if continueOnNotReady is set to 'true', the metadata file will persist the nextIssuanceTime
+			//       as the 'now' time of the NodePublishVolume call. We will therefore resume management of
+			//       these volumes despite there not having been a successful initial issuance.
+			//       For users upgrading from an older version of the csi-lib, this field will not be set.
+			//       These pods will only have management begun again upon the next NodePublishVolume call, which
+			//       may not happen at all unless `requireRepublish: true` is set on the CSIDriver object.
 			// TODO: we should probably consider deleting the volume from the state store in these instances
 			//       to avoid having leftover metadata files for pods that don't actually exist anymore.
 			log.Info("Skipping management of volume that has never successfully completed")

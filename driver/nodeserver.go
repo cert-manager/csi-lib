@@ -68,6 +68,14 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return nil, status.Error(codes.InvalidArgument, "pod.spec.volumes[].csi.readOnly must be set to 'true'")
 	}
 
+	// If continueOnNotReady is enabled, set the NextIssuanceTime in the metadata file to epoch.
+	// This allows the manager to start management for the volume again on restart if the first
+	// issuance did not successfully complete.
+	if meta.NextIssuanceTime == nil && ns.continueOnNotReady {
+		epoch := time.Time{}
+		meta.NextIssuanceTime = &epoch
+	}
+
 	if registered, err := ns.store.RegisterMetadata(meta); err != nil {
 		return nil, err
 	} else {
