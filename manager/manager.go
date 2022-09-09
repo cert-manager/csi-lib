@@ -82,6 +82,9 @@ type Options struct {
 	SignRequest        SignRequestFunc
 	WriteKeypair       WriteKeypairFunc
 	ReadyToRequest     ReadyToRequestFunc
+
+	// BackoffConfig configures the exponential backoff applied to certificate renewal failures.
+	BackoffConfig *wait.Backoff
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -99,6 +102,22 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	if opts.Clock == nil {
 		opts.Clock = clock.RealClock{}
+	}
+	if opts.BackoffConfig == nil {
+		opts.BackoffConfig = &wait.Backoff{
+			// the 'base' amount of time for the backoff
+			Duration: time.Second * 30,
+			// We multiply the 'duration' by 2.0 if the attempt fails/errors
+			Factor: 2.0,
+			// Add a jitter of +/- 0.5 of the 'duration'
+			Jitter: 0.5,
+			// 'Steps' controls what the maximum number of backoff attempts is before we
+			// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
+			// reset this unless we get a successful attempt.
+			Steps: math.MaxInt32,
+			// The maximum time between calls will be 5 minutes
+			Cap: time.Minute * 5,
+		}
 	}
 	if opts.Log == nil {
 		return nil, errors.New("Log must be set")
@@ -167,6 +186,7 @@ func NewManager(opts Options) (*Manager, error) {
 
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
+		backoffConfig:        *opts.BackoffConfig,
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -263,6 +283,9 @@ type Manager struct {
 
 	// maximum number of CertificateRequests that should exist at any time for each volume
 	maxRequestsPerVolume int
+
+	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
+	backoffConfig wait.Backoff
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -589,20 +612,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 					// Instead, retry within the same iteration of the for loop and apply an exponential backoff.
 					// Because we pass ctx through to the 'wait' package, if the stopCh is closed/context is cancelled,
 					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
-					if err := wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
-						// 8s is the 'base' amount of time for the backoff
-						Duration: time.Second * 8,
-						// We multiple the 'duration' by 2.0 if the attempt fails/errors
-						Factor: 2.0,
-						// Add a jitter of +/- 1s (0.5 of the 'duration')
-						Jitter: 0.5,
-						// 'Steps' controls what the maximum number of backoff attempts is before we
-						// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
-						// reset this unless we get a successful attempt.
-						Steps: math.MaxInt32,
-						// The maximum time between calls will be 5 minutes
-						Cap: time.Minute * 5,
-					}, func() (bool, error) {
+					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func() (bool, error) {
 						log.Info("Triggering new issuance")
 						if err := m.issue(ctx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")

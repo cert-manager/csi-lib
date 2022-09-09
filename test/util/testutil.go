@@ -21,6 +21,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+	"math"
 	"net"
 	"testing"
 	"time"
@@ -120,6 +121,7 @@ func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeCli
 		SignRequest:          opts.SignRequest,
 		WriteKeypair:         opts.WriteKeypair,
 		ReadyToRequest:       opts.ReadyToRequest,
+		BackoffConfig:        &wait.Backoff{Steps: math.MaxInt32}, // don't actually wait (i.e. set all backoff times to 0)
 	})
 
 	d := driver.NewWithListener(lis, *opts.Log, driver.Options{
