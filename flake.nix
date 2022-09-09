@@ -28,21 +28,37 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
 
-        # alias for buildGoModule with pinned go version to v1.19;
-        buildGo = pkgs.buildGo119Module;
+            (final: prev: {
+              # Overlay kind to version v0.15.0
+              kind = prev.buildGo119Module {
+                inherit (prev.kind.drvAttrs)
+                  pname doCheck patches nativeBuildInputs buildInputs
+                  buildPhase installPhase subPackages postInstall
+                  CGO_ENABLED GOFLAGS ldFlags;
+                inherit (prev.kind) meta;
+                version = "0.15.0";
+                src = pkgs.fetchFromGitHub {
+                  owner = "kubernetes-sigs";
+                  repo = "kind";
+                  rev = "v0.15.0";
+                  sha256 = "sha256-IDSWmNWHnTKOl6/N1Mz+OKOkZSBarpuN39CBsSjYhKY=";
+                };
+                vendorSha256 = "sha256-FE1GvNgXkBt2cH4YB3jTsPXp91DSiYlniQLtMwvi384=";
+              };
+            })
+          ];
+        };
 
         # We only source go files to have better cache hits when actively
         # working on non-go files.
         src = pkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
         vendorSha256 = "sha256-3pNKmR+yKIf/15eftJyHD7m7LerFbZ2m+N6zxVXz2sU=";
 
-        kindVersion = "0.15.0";
-        kindHash = "sha256-IDSWmNWHnTKOl6/N1Mz+OKOkZSBarpuN39CBsSjYhKY=";
-        kindVendorSha256 = "sha256-FE1GvNgXkBt2cH4YB3jTsPXp91DSiYlniQLtMwvi384=";
-
-        cert-manager-csi = buildGo {
+        cert-manager-csi = pkgs.buildGo119Module {
           name = "cert-manager-csi";
           inherit src vendorSha256;
           subPackages = [ "./example" ];
@@ -50,7 +66,7 @@
         };
 
         # e2e test binary.
-        csi-lib-e2e = buildGo {
+        csi-lib-e2e = pkgs.buildGo119Module {
           name = "csi-lib-e2e";
           inherit src vendorSha256;
           buildPhase = ''
@@ -61,37 +77,6 @@
             mv csi-lib-e2e $out/bin/.
           '';
           doCheck = false;
-        };
-
-        kind = buildGo rec {
-          name = "kind";
-          version = kindVersion;
-          src = pkgs.fetchFromGitHub {
-            owner = "kubernetes-sigs";
-            repo = name;
-            rev = "v${version}";
-            hash = kindHash;
-          };
-          vendorSha256 = kindVendorSha256;
-          # Required to ignore `/hack/tools` module.
-          subPackages = [ "." ];
-          nativeBuildInputs = [ pkgs.installShellFiles ];
-          postInstall = ''
-            installShellCompletion --cmd kind \
-              --bash <($out/bin/kind completion bash) \
-              --fish <($out/bin/kind completion fish) \
-              --zsh <($out/bin/kind completion zsh)
-          '';
-          meta = with pkgs.lib; {
-            homepage = "https://github.com/kubernetes-sigs/kind";
-            description = "Kubernetes IN Docker - local clusters for testing Kubernetes";
-            longDescription = ''
-              kind is a tool for running local Kubernetes clusters using Docker
-              container "nodes". kind was primarily designed for testing Kubernetes
-              itself, but may be used for local development or CI.
-            '';
-            license = licenses.asl20;
-          };
         };
 
         containerImage = pkgs.dockerTools.buildImage {
@@ -122,7 +107,7 @@
             pkgs.kubernetes-helm
             pkgs.ginkgo
             pkgs.docker
-            kind
+            pkgs.kind
             cert-manager-csi
             csi-lib-e2e
           ];
