@@ -286,6 +286,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log.Info("Created new CertificateRequest resource")
 
 	// Poll every 1s for the CertificateRequest to be ready
+	lastFailureReason := ""
 	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
@@ -304,11 +305,25 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		// Handle cases where the request has been explicitly denied
 		if apiutil.CertificateRequestIsDenied(updatedReq) {
 			cond := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionDenied)
+			// if a CR has been explicitly denied, we DO stop execution.
+			// there may be a case to be made that we could continue anyway even if the issuer ignores the approval
+			// status, however these cases are likely few and far between and this makes denial more responsive.
 			return false, fmt.Errorf("request %q has been denied by the approval plugin: %s", updatedReq.Name, cond.Message)
+		}
+
+		if !apiutil.CertificateRequestIsApproved(updatedReq) {
+			lastFailureReason = "request has not yet been approved by approval plugin"
+			// we don't stop execution here, as some versions of cert-manager (and some external issuer plugins)
+			// may not be aware/utilise approval.
+			// If the certificate is still issued despite never being approved, the CSI driver should continue
+			// and use the issued certificate despite not being approved.
 		}
 
 		readyCondition := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionReady)
 		if readyCondition == nil {
+			if apiutil.CertificateRequestIsApproved(updatedReq) {
+				lastFailureReason = "request has no ready condition"
+			}
 			log.V(2).Info("CertificateRequest is still pending")
 			// Issuance is still pending
 			return false, nil
@@ -320,9 +335,11 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
+			lastFailureReason = fmt.Sprintf("request pending: %v", readyCondition.Message)
 			log.V(2).Info("CertificateRequest is still pending")
 			return false, nil
 		default:
+			lastFailureReason = fmt.Sprintf("unrecognised Ready condition state (%s): %s", readyCondition.Reason, readyCondition.Message)
 			log.Info("unrecognised state for Ready condition", "request_namespace", updatedReq.Namespace, "request_name", updatedReq.Name, "condition", *readyCondition)
 			return false, nil
 		}
@@ -333,6 +350,10 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		req = updatedReq
 		return true, nil
 	}, ctx.Done()); err != nil {
+		if errors.Is(err, wait.ErrWaitTimeout) {
+			// try and return a more helpful error message than "timed out waiting for the condition"
+			return fmt.Errorf("waiting for request: %s", lastFailureReason)
+		}
 		return fmt.Errorf("waiting for request: %w", err)
 	}
 
