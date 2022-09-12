@@ -28,7 +28,7 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; overlays = [ (import ./hack/nix/overlay-kind.nix) ]; };
+        pkgs = import nixpkgs { inherit system; };
 
         # We only source go files to have better cache hits when actively
         # working on non-go files.
