@@ -26,7 +26,6 @@ import (
 	"github.com/go-logr/logr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/mount-utils"
 
 	"github.com/cert-manager/csi-lib/manager"
@@ -48,8 +47,8 @@ type nodeServer struct {
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	meta := metadata.FromNodePublishVolumeRequest(req)
 	log := loggerForMetadata(ns.log, meta)
-	ctx, _ = context.WithTimeout(ctx, time.Second*30)
-
+	ctx, cancel := context.WithTimeout(ctx, time.Second*60)
+	defer cancel()
 	// clean up after ourselves if provisioning fails.
 	// this is required because if publishing never succeeds, unpublish is not
 	// called which leaves files around (and we may continue to renew if so).
@@ -69,6 +68,14 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		return nil, status.Error(codes.InvalidArgument, "pod.spec.volumes[].csi.readOnly must be set to 'true'")
 	}
 
+	// If continueOnNotReady is enabled, set the NextIssuanceTime in the metadata file to epoch.
+	// This allows the manager to start management for the volume again on restart if the first
+	// issuance did not successfully complete.
+	if meta.NextIssuanceTime == nil && ns.continueOnNotReady {
+		epoch := time.Time{}
+		meta.NextIssuanceTime = &epoch
+	}
+
 	if registered, err := ns.store.RegisterMetadata(meta); err != nil {
 		return nil, err
 	} else {
@@ -79,32 +86,31 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		}
 	}
 
-	if err := ns.manager.ManageVolume(req.GetVolumeId()); err != nil {
-		return nil, err
-	}
-
-	log.Info("Volume registered for management")
-
-	// Only wait for the volume to be ready if it is in a state of 'ready to request'
-	// already. This allows implementors to defer actually requesting certificates
-	// until later in the pod lifecycle (e.g. after CNI has run & an IP address has been
-	// allocated, if a user wants to embed pod IPs into their requests).
-	isReadyToRequest, reason := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
-	if !isReadyToRequest {
-		log.Info("Unable to request a certificate right now, will be retried", "reason", reason)
-	}
-	if isReadyToRequest || !ns.continueOnNotReady {
-		log.Info("Waiting for certificate to be issued...")
-		if err := wait.PollUntil(time.Second, func() (done bool, err error) {
-			return ns.manager.IsVolumeReady(req.GetVolumeId()), nil
-		}, ctx.Done()); err != nil {
-			return nil, err
+	if !ns.manager.IsVolumeReady(req.GetVolumeId()) {
+		// Only wait for the volume to be ready if it is in a state of 'ready to request'
+		// already. This allows implementors to defer actually requesting certificates
+		// until later in the pod lifecycle (e.g. after CNI has run & an IP address has been
+		// allocated, if a user wants to embed pod IPs into their requests).
+		isReadyToRequest, reason := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
+		if isReadyToRequest {
+			log.V(4).Info("Waiting for certificate to be issued...")
+			if _, err := ns.manager.ManageVolumeImmediate(ctx, req.GetVolumeId()); err != nil {
+				return nil, err
+			}
+			log.Info("Volume registered for management")
+		} else {
+			if ns.continueOnNotReady {
+				log.V(4).Info("Skipping waiting for certificate to be issued")
+				ns.manager.ManageVolume(req.GetVolumeId())
+				log.V(4).Info("Volume registered for management")
+			} else {
+				log.Info("Unable to request a certificate right now, will be retried", "reason", reason)
+				return nil, fmt.Errorf("volume is not yet ready to be setup, will be retried: %s", reason)
+			}
 		}
-	} else {
-		log.Info("Skipping waiting for certificate to be issued")
 	}
 
-	log.Info("Volume ready for mounting")
+	log.Info("Ensuring data directory for volume is mounted into pod...")
 	notMnt, err := mount.IsNotMountPoint(ns.mounter, req.GetTargetPath())
 	switch {
 	case os.IsNotExist(err):
@@ -118,11 +124,12 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 
 	if !notMnt {
 		// Nothing more to do if the targetPath is already a bind mount
+		log.Info("Volume already mounted to pod, nothing to do")
 		success = true
 		return &csi.NodePublishVolumeResponse{}, nil
 	}
 
-	log.Info("Bind mounting data directory to the targetPath")
+	log.Info("Bind mounting data directory to the pod's mount namespace")
 	// bind mount the targetPath to the data directory
 	if err := ns.mounter.Mount(ns.store.PathForVolume(req.GetVolumeId()), req.GetTargetPath(), "", []string{"bind", "ro"}); err != nil {
 		return nil, err

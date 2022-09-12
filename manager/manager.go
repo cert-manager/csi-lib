@@ -82,6 +82,9 @@ type Options struct {
 	SignRequest        SignRequestFunc
 	WriteKeypair       WriteKeypairFunc
 	ReadyToRequest     ReadyToRequestFunc
+
+	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
+	RenewalBackoffConfig *wait.Backoff
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -99,6 +102,22 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	if opts.Clock == nil {
 		opts.Clock = clock.RealClock{}
+	}
+	if opts.RenewalBackoffConfig == nil {
+		opts.RenewalBackoffConfig = &wait.Backoff{
+			// the 'base' amount of time for the backoff
+			Duration: time.Second * 30,
+			// We multiply the 'duration' by 2.0 if the attempt fails/errors
+			Factor: 2.0,
+			// Add a jitter of +/- 0.5 of the 'duration'
+			Jitter: 0.5,
+			// 'Steps' controls what the maximum number of backoff attempts is before we
+			// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
+			// reset this unless we get a successful attempt.
+			Steps: math.MaxInt32,
+			// The maximum time between calls will be 5 minutes
+			Cap: time.Minute * 5,
+		}
 	}
 	if opts.Log == nil {
 		return nil, errors.New("Log must be set")
@@ -167,6 +186,7 @@ func NewManager(opts Options) (*Manager, error) {
 
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
+		backoffConfig:        *opts.RenewalBackoffConfig,
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -175,10 +195,32 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 
 	for _, vol := range vols {
-		m.log.Info("Registering existing data directory for management", "volume", vol)
-		if err := m.ManageVolume(vol); err != nil {
-			return nil, fmt.Errorf("loading existing volume: %w", err)
+		log := m.log.WithValues("volume_id", vol)
+		meta, err := opts.MetadataReader.ReadMetadata(vol)
+		if err != nil {
+			// This implies something has modified the state store whilst we are starting up
+			// return the error and hope that next time we startup, nothing else changes the filesystem
+			return nil, fmt.Errorf("reading existing volume metadata: %w", err)
 		}
+		if meta.NextIssuanceTime == nil {
+			// This implies that a successful issuance has never been completed for this volume.
+			// don't register these volumes for management automatically as they could be leftover
+			// from a previous instance of the CSI driver handling a NodePublishVolume call that was
+			// not able to clean up the state store before an unexpected exit.
+			// Whatever is calling the CSI plugin should call NodePublishVolume again relatively soon
+			// after we start up, which will trigger management to resume.
+			// Note: if continueOnNotReady is set to 'true', the metadata file will persist the nextIssuanceTime as the epoch time.
+			//       We will therefore resume management of these volumes despite there not having been a successful initial issuance.
+			//       For users upgrading from an older version of the csi-lib, this field will not be set.
+			//       These pods will only have management begun again upon the next NodePublishVolume call, which
+			//       may not happen at all unless `requireRepublish: true` is set on the CSIDriver object.
+			// TODO: we should probably consider deleting the volume from the state store in these instances
+			//       to avoid having leftover metadata files for pods that don't actually exist anymore.
+			log.Info("Skipping management of volume that has never successfully completed")
+			continue
+		}
+		log.Info("Registering existing data directory for management", "volume", vol)
+		m.ManageVolume(vol)
 	}
 
 	return m, nil
@@ -240,6 +282,9 @@ type Manager struct {
 
 	// maximum number of CertificateRequests that should exist at any time for each volume
 	maxRequestsPerVolume int
+
+	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
+	backoffConfig wait.Backoff
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -286,6 +331,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log.Info("Created new CertificateRequest resource")
 
 	// Poll every 1s for the CertificateRequest to be ready
+	lastFailureReason := ""
 	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
@@ -304,11 +350,25 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		// Handle cases where the request has been explicitly denied
 		if apiutil.CertificateRequestIsDenied(updatedReq) {
 			cond := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionDenied)
+			// if a CR has been explicitly denied, we DO stop execution.
+			// there may be a case to be made that we could continue anyway even if the issuer ignores the approval
+			// status, however these cases are likely few and far between and this makes denial more responsive.
 			return false, fmt.Errorf("request %q has been denied by the approval plugin: %s", updatedReq.Name, cond.Message)
+		}
+
+		if !apiutil.CertificateRequestIsApproved(updatedReq) {
+			lastFailureReason = "request has not yet been approved by approval plugin"
+			// we don't stop execution here, as some versions of cert-manager (and some external issuer plugins)
+			// may not be aware/utilise approval.
+			// If the certificate is still issued despite never being approved, the CSI driver should continue
+			// and use the issued certificate despite not being approved.
 		}
 
 		readyCondition := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionReady)
 		if readyCondition == nil {
+			if apiutil.CertificateRequestIsApproved(updatedReq) {
+				lastFailureReason = "request has no ready condition"
+			}
 			log.V(2).Info("CertificateRequest is still pending")
 			// Issuance is still pending
 			return false, nil
@@ -320,9 +380,11 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
+			lastFailureReason = fmt.Sprintf("request pending: %v", readyCondition.Message)
 			log.V(2).Info("CertificateRequest is still pending")
 			return false, nil
 		default:
+			lastFailureReason = fmt.Sprintf("unrecognised Ready condition state (%s): %s", readyCondition.Reason, readyCondition.Message)
 			log.Info("unrecognised state for Ready condition", "request_namespace", updatedReq.Namespace, "request_name", updatedReq.Name, "condition", *readyCondition)
 			return false, nil
 		}
@@ -333,6 +395,10 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		req = updatedReq
 		return true, nil
 	}, ctx.Done()); err != nil {
+		if errors.Is(err, wait.ErrWaitTimeout) {
+			// try and return a more helpful error message than "timed out waiting for the condition"
+			return fmt.Errorf("waiting for request: %s", lastFailureReason)
+		}
 		return fmt.Errorf("waiting for request: %w", err)
 	}
 
@@ -454,21 +520,67 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 	return req, nil
 }
 
-// ManageVolume will initiate management of data for the given volumeID.
-func (m *Manager) ManageVolume(volumeID string) error {
+// ManageVolumeImmediate will register a volume for management and immediately attempt a single issuance.
+// If issuing the initial certificate succeeds, the background renewal routine will be started similar to Manage().
+// Upon failure, it is the caller's responsibility to explicitly call `UnmanageVolume`.
+func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (managed bool, err error) {
+	if !m.manageVolumeIfNotManaged(volumeID) {
+		return false, nil
+	}
+
+	meta, err := m.metadataReader.ReadMetadata(volumeID)
+	if err != nil {
+		return true, fmt.Errorf("reading metadata: %w", err)
+	}
+
+	// Only attempt issuance immediately if there isn't already an issued certificate
+	if meta.NextIssuanceTime == nil {
+		// If issuance fails, immediately return without retrying so the caller can decide
+		// how to proceed depending on the context this method was called within.
+		if err := m.issue(ctx, volumeID); err != nil {
+			return true, err
+		}
+	}
+
+	if !m.startRenewalRoutine(volumeID) {
+		return true, fmt.Errorf("unexpected state: renewal routine not started, please open an issue at https://github.com/cert-manager/csi-lib")
+	}
+
+	return true, nil
+}
+
+// manageVolumeIfNotManaged will ensure the named volume has been registered for management.
+// It returns 'true' if the volume was not previously managed, and false if the volume was already managed.
+func (m *Manager) manageVolumeIfNotManaged(volumeID string) (managed bool) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	log := m.log.WithValues("volume_id", volumeID)
 
 	// if the volume is already managed, return early
-	if _, ok := m.managedVolumes[volumeID]; ok {
+	if _, managed := m.managedVolumes[volumeID]; managed {
 		log.V(2).Info("Volume already registered for management")
-		return nil
+		return false
 	}
 
 	// construct a new channel used to stop management of the volume
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
+
+	return true
+}
+
+// startRenewalRoutine will begin the background issuance goroutine for the given volumeID.
+// It is the caller's responsibility to ensure this is only called once per volume.
+func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	log := m.log.WithValues("volume_id", volumeID)
+
+	stopCh, ok := m.managedVolumes[volumeID]
+	if !ok {
+		log.Info("Volume not registered for management, cannot start renewal routine...")
+		return false
+	}
 
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -481,7 +593,6 @@ func (m *Manager) ManageVolume(volumeID string) error {
 
 	go func() {
 		// check every volume once per second
-		// TODO: optimise this to not check so often
 		ticker := time.NewTicker(time.Second)
 		for {
 			select {
@@ -496,33 +607,45 @@ func (m *Manager) ManageVolume(volumeID string) error {
 				}
 
 				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
-					wait.ExponentialBackoffWithContext(ctx, wait.Backoff{
-						// 2s is the 'base' amount of time for the backoff
-						Duration: time.Second * 2,
-						// We multiple the 'duration' by 2.0 if the attempt fails/errors
-						Factor: 2.0,
-						// Add a jitter of +/- 1s (0.5 of the 'duration')
-						Jitter: 0.5,
-						// 'Steps' controls what the maximum number of backoff attempts is before we
-						// reset back to the 'base duration'. Set this to the MaxInt32, as we never want to
-						// reset this unless we get a successful attempt.
-						Steps: math.MaxInt32,
-						// The maximum time between calls will be 1 minute
-						Cap: time.Minute,
-					}, func() (bool, error) {
+					// If issuing a certificate fails, we don't go around the outer for loop again (as we'd then be creating
+					// a new CertificateRequest every second).
+					// Instead, retry within the same iteration of the for loop and apply an exponential backoff.
+					// Because we pass ctx through to the 'wait' package, if the stopCh is closed/context is cancelled,
+					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
+					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func() (bool, error) {
 						log.Info("Triggering new issuance")
 						if err := m.issue(ctx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							return false, nil
 						}
 						return true, nil
-					})
+					}); err != nil {
+						if errors.Is(err, wait.ErrWaitTimeout) || errors.Is(err, context.DeadlineExceeded) {
+							continue
+						}
+						// this should never happen as the function above never actually returns errors
+						log.Error(err, "unexpected error")
+					}
 				}
 			}
 		}
 	}()
+	return true
+}
 
-	return nil
+// ManageVolume will initiate management of data for the given volumeID. It will not wait for an initial certificate
+// to be issued and instead rely on the renewal handling loop to issue the initial certificate.
+// Callers can use `IsVolumeReady` to determine if a certificate has been successfully issued or not.
+// Upon failure, it is the callers responsibility to call `UnmanageVolume`.
+func (m *Manager) ManageVolume(volumeID string) (managed bool) {
+	log := m.log.WithValues("volume_id", volumeID)
+	if managed := m.manageVolumeIfNotManaged(volumeID); !managed {
+		return false
+	}
+	if started := m.startRenewalRoutine(volumeID); !started {
+		log.Info("unexpected state: renewal routine not started, please open an issue at https://github.com/cert-manager/csi-lib")
+	}
+	return true
 }
 
 func (m *Manager) UnmanageVolume(volumeID string) {
@@ -546,6 +669,13 @@ func (m *Manager) IsVolumeReadyToRequest(volumeID string) (bool, string) {
 }
 
 func (m *Manager) IsVolumeReady(volumeID string) bool {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	// a volume is not classed as Ready if it is not managed
+	if _, managed := m.managedVolumes[volumeID]; !managed {
+		return false
+	}
+
 	meta, err := m.metadataReader.ReadMetadata(volumeID)
 	if err != nil {
 		m.log.Error(err, "failed to read metadata", "volume_id", volumeID)
