@@ -83,8 +83,8 @@ type Options struct {
 	WriteKeypair       WriteKeypairFunc
 	ReadyToRequest     ReadyToRequestFunc
 
-	// BackoffConfig configures the exponential backoff applied to certificate renewal failures.
-	BackoffConfig *wait.Backoff
+	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
+	RenewalBackoffConfig *wait.Backoff
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -103,8 +103,8 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.Clock == nil {
 		opts.Clock = clock.RealClock{}
 	}
-	if opts.BackoffConfig == nil {
-		opts.BackoffConfig = &wait.Backoff{
+	if opts.RenewalBackoffConfig == nil {
+		opts.RenewalBackoffConfig = &wait.Backoff{
 			// the 'base' amount of time for the backoff
 			Duration: time.Second * 30,
 			// We multiply the 'duration' by 2.0 if the attempt fails/errors
@@ -186,7 +186,7 @@ func NewManager(opts Options) (*Manager, error) {
 
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
-		backoffConfig:        *opts.BackoffConfig,
+		backoffConfig:        *opts.RenewalBackoffConfig,
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -522,7 +522,8 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 }
 
 // ManageVolumeImmediate will register a volume for management and immediately attempt a single issuance.
-// This
+// If issuing the initial certificate succeeds, the background renewal routine will be started similar to Manage().
+// Upon failure, it is the caller's responsibility to explicitly call `UnmanageVolume`.
 func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (managed bool, err error) {
 	if !m.manageVolumeIfNotManaged(volumeID) {
 		return false, nil
@@ -633,7 +634,10 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 	return true
 }
 
-// ManageVolume will initiate management of data for the given volumeID.
+// ManageVolume will initiate management of data for the given volumeID. It will not wait for an initial certificate
+// to be issued and instead rely on the renewal handling loop to issue the initial certificate.
+// Callers can use `IsVolumeReady` to determine if a certificate has been successfully issued or not.
+// Upon failure, it is the callers responsibility to call `UnmanageVolume`.
 func (m *Manager) ManageVolume(volumeID string) (managed bool) {
 	log := m.log.WithValues("volume_id", volumeID)
 	if managed := m.manageVolumeIfNotManaged(volumeID); !managed {

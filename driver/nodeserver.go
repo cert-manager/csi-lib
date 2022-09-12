@@ -47,8 +47,8 @@ type nodeServer struct {
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	meta := metadata.FromNodePublishVolumeRequest(req)
 	log := loggerForMetadata(ns.log, meta)
-	ctx, _ = context.WithTimeout(ctx, time.Second*60)
-
+	ctx, cancel := context.WithTimeout(ctx, time.Second*60)
+	defer cancel()
 	// clean up after ourselves if provisioning fails.
 	// this is required because if publishing never succeeds, unpublish is not
 	// called which leaves files around (and we may continue to renew if so).
