@@ -19,10 +19,11 @@ set -o nounset
 set -o pipefail
 
 
-CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.9.1}"
-
 ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
 cd "$ROOT_DIR"
+
+TMP_DIR=$(mktemp -d)
+trap "rm -rf $TMP_DIR" EXIT
 
 check_command() {
   if ! [ -x "$(command -v $1)" ]; then
@@ -47,16 +48,30 @@ echo "docker"
 docker version
 
 echo "> Creating cluster..."
-kind create cluster --name cert-manager-csi-e2e
+docker load < $(nix build --print-out-paths .#kind-node-image)
 trap delete_cluster EXIT
+kind create cluster --name cert-manager-csi-e2e
 
-echo "> Loading csi-lib docker container..."
-nix build .#container
-kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout result)
+kind get kubeconfig --name cert-manager-csi-e2e > "$TMP_DIR/kubeconfig"
+export KUBECONFIG="$TMP_DIR/kubeconfig"
+
+echo "> Loading cert-manager images..."
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#cert-manager-controller-image) &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#cert-manager-webhook-image) &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#cert-manager-cainjector-image) &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#cert-manager-ctl-image) &
+
+echo "> Loading busybox image..."
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#busybox-image) &
+
+echo "> Loading csi-lib docker image..."
+kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout $(nix build --print-out-paths .#container)) &
+
+wait
 
 echo "> Installing cert-manager..."
-helm repo add --force-update jetstack https://charts.jetstack.io
-helm upgrade -i cert-manager jetstack/cert-manager --set installCRDs=true --version $CERT_MANAGER_VERSION -n cert-manager --create-namespace --wait
+helm install cert-manager --set installCRDs=true -n cert-manager --create-namespace --wait \
+  $(nix build --print-out-paths .#cert-manager-helm-chart)
 
 echo "> Installing csi-driver..."
 kubectl apply -f ./deploy/cert-manager-csi-driver.yaml
@@ -65,7 +80,6 @@ kubectl get pods -A
 
 echo "> Waiting for all pods to be ready..."
 kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m
-
 
 echo "> Running tests"
 csi-lib-e2e
