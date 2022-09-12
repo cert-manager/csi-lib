@@ -33,8 +33,9 @@
         # We only source go files to have better cache hits when actively
         # working on non-go files.
         src = pkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
-        vendorSha256 = "sha256-3pNKmR+yKIf/15eftJyHD7m7LerFbZ2m+N6zxVXz2sU=";
-
+        vendorSha256 = "sha256-jxiwax8g+ZtiR66UFUfMt5QQ7lGAH6wR3iPugmFZ/hc=";
+        src-e2e = pkgs.lib.sourceFilesBySuffices ./test/e2e [ ".go" "go.mod" "go.sum" ];
+        csi-lib-e2e-vendorSha256 = "sha256-AlovNqQCh+Yvw0Y6zRc24mzLqxMobjjip7Yhi004ROM=";
 
         e2e-cert-manager-version = "1.9.1";
         e2e-cert-manager-controller-digest = "sha256:cd9bf3d48b6b8402a2a8b11953f9dc0275ba4beec14da47e31823a0515cde7e2";
@@ -67,15 +68,13 @@
         # e2e test binary.
         csi-lib-e2e = pkgs.buildGo119Module {
           name = "csi-lib-e2e";
-          inherit src vendorSha256;
+          src = src-e2e;
+          vendorSha256 = csi-lib-e2e-vendorSha256;
+          # We need to use a custom `buildPhase` so that we can build the e2e
+          # binary using `go test` instead of `go build`.
           buildPhase = ''
-            go test -v --race -o csi-lib-e2e -c ./test/e2e/.
+            go test -v --race -o csi-lib-e2e -c ./.
           '';
-          postInstall = ''
-            mkdir -p $out/bin
-            mv csi-lib-e2e $out/bin/.
-          '';
-          doCheck = false;
         };
 
         containerImage = pkgs.dockerTools.buildImage {
