@@ -35,6 +35,7 @@
         src = pkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
         vendorSha256 = "sha256-3pNKmR+yKIf/15eftJyHD7m7LerFbZ2m+N6zxVXz2sU=";
 
+
         e2e-cert-manager-version = "1.9.1";
         e2e-cert-manager-controller-digest = "sha256:cd9bf3d48b6b8402a2a8b11953f9dc0275ba4beec14da47e31823a0515cde7e2";
         e2e-cert-manager-controller-sha256 = "sha256-NQcTUOuqmHDWqD8kMhE8AApZmsNa3ElXlHe5qyCrSJs=";
@@ -48,6 +49,10 @@
         e2e-kind-node-version = "1.25.0";
         e2e-kind-node-digest = "sha256:428aaa17ec82ccde0131cb2d1ca6547d13cf5fdabcc0bbecf749baa935387cbf";
         e2e-kind-node-sha256 = "sha256-s8kIavYmei38a+PrWjj54BDW9grLP8tRU09XkQ2zAME=";
+
+        csi-node-driver-registrar-version = "1.2.0";
+        csi-node-driver-registrar-digest = "sha256:89cdb2a20bdec89b75e2fbd82a67567ea90b719524990e772f2704b19757188d";
+        csi-node-driver-registrar-sha256 = "sha256-yve52Xxoyc00lOJGPACijt+3VQX6ngXtfl6nGqbFsIw=";
 
         e2e-busybox-digest = "sha256:b8f68c62fe862281bf598060f15cb080ef778dc9db19f136d19a3531ffcb9aa0";
         e2e-busybox-sha256 = "sha256-E0PakwKrCGFybyKC3BW/LW43oHiiCXQuT4dKtHrdNc4=";
@@ -133,6 +138,14 @@
           finalImageName = "quay.io/jetstack/cert-manager-ctl";
         };
 
+        csi-node-driver-registrar-image = pkgs.dockerTools.pullImage{
+          imageName = "quay.io/k8scsi/csi-node-driver-registrar";
+          imageDigest = csi-node-driver-registrar-digest;
+          sha256 = csi-node-driver-registrar-sha256;
+          finalImageTag = "v${csi-node-driver-registrar-version}";
+          finalImageName = "quay.io/k8scsi/csi-node-driver-registrar";
+        };
+
         busybox-image = pkgs.dockerTools.pullImage{
           imageName = "busybox";
           imageDigest = e2e-busybox-digest;
@@ -153,6 +166,7 @@
           inherit cert-manager-ctl-image;
           inherit cert-manager-csi;
           inherit busybox-image;
+          inherit csi-node-driver-registrar-image;
           inherit csi-lib-e2e;
         };
         devShells.default = pkgs.mkShell {

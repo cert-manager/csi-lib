@@ -66,6 +66,7 @@ kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-path
 
 echo "> Loading csi-lib docker image..."
 kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout $(nix build --print-out-paths .#container)) &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths .#csi-node-driver-registrar-image) &
 
 wait
 
