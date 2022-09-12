@@ -18,27 +18,25 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-
-ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
-cd "$ROOT_DIR"
-
-TMP_DIR=$(mktemp -d)
-trap "rm -rf $TMP_DIR" EXIT
-
-check_command() {
-  if ! [ -x "$(command -v $1)" ]; then
-    echo "Error: $1 is not installed." >&2
-    echo "Invoke script using 'nix develop -c ./hack/run.sh'" >&2
-    echo "https://nixos.org/download.html" >&2
-    exit 1
-  fi
-}
-
 delete_cluster() {
   kind delete cluster --name cert-manager-csi-e2e
 }
 
-for cmd in ginkgo docker kind kubectl helm nix csi-lib-e2e; do check_command $cmd; done
+ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
+cd "$ROOT_DIR"
+
+# Add user nix config so that flakes are enabled for the script.
+export NIX_USER_CONF_FILES=${ROOT_DIR}/hack/nix/nix.conf
+
+TMP_DIR=$(mktemp -d)
+trap "rm -rf $TMP_DIR" EXIT
+
+# If this environment variable is not set, then that means that we are no in a
+# nix shell, and the command was not invoked with `nix develop -c
+# ./hack/run-e2e.sh` or similar.
+if ! [ -v IN_NIX_SHELL ]; then
+  exec nix develop -c "${ROOT_DIR}/hack/run-e2e.sh"
+fi
 
 ginkgo version
 kind version
