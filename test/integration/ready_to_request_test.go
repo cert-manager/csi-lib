@@ -45,7 +45,7 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 	clock := fakeclock.NewFakeClock(time.Now())
 
 	calls := 0
-	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: true,
@@ -130,7 +130,7 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
-	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: false,

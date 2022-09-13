@@ -19,6 +19,10 @@ package driver
 import (
 	"crypto"
 	"crypto/x509"
+	"math"
+	"net"
+	"testing"
+
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	fakeclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -28,9 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/mount-utils"
 	"k8s.io/utils/clock"
-	"math"
-	"net"
-	"testing"
 
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
@@ -38,7 +39,7 @@ import (
 	"github.com/cert-manager/csi-lib/storage"
 )
 
-type DriverOptions struct {
+type Options struct {
 	Clock   clock.Clock
 	Store   storage.Interface
 	Log     *logr.Logger
@@ -56,7 +57,7 @@ type DriverOptions struct {
 	ReadyToRequest     manager.ReadyToRequestFunc
 }
 
-func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
+func Run(t *testing.T, opts Options) (Options, csi.NodeClient, func()) {
 	if opts.Log == nil {
 		logger := logrtesting.NewTestLogger(t)
 		opts.Log = &logger

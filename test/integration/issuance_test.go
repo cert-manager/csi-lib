@@ -43,7 +43,7 @@ import (
 func TestIssuesCertificate(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
-	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store: store,
 		Clock: clock,
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
@@ -108,7 +108,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
-	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:                store,
 		Clock:                clock,
 		MaxRequestsPerVolume: 1,
