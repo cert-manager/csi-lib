@@ -17,13 +17,13 @@ limitations under the License.
 package util
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"k8s.io/client-go/rest"
 
 	"github.com/cert-manager/csi-lib/metadata"
-	"github.com/stretchr/testify/assert"
 )
 
 func Test_restConfigForMetadataTokenRequestEmptyAud(t *testing.T) {
@@ -131,8 +131,12 @@ func Test_restConfigForMetadataTokenRequestEmptyAud(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			restConfig, gotErr := restConfigForMetadataTokenRequestEmptyAud(baseRestConfig)(metadata.Metadata{VolumeContext: test.volumeContext})
-			assert.Equal(t, test.expErr, gotErr != nil, "%v", gotErr)
-			assert.Equal(t, test.expRestConfig, restConfig)
+			if test.expErr != (gotErr != nil) {
+				t.Errorf("expected error %t but got %v", test.expErr, gotErr)
+			}
+			if !reflect.DeepEqual(test.expRestConfig, restConfig) {
+				t.Errorf("expected rest config %v but got %v", test.expRestConfig, restConfig)
+			}
 		})
 	}
 }
