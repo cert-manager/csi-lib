@@ -81,7 +81,7 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 
 	// Setup a routine to issue/sign the request IF it is created
 	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
 	defer close(stopCh)
 
 	tmpDir, err := os.MkdirTemp("", "*")
@@ -116,7 +116,7 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 		if !reflect.DeepEqual(files["ca"], []byte("ca bytes")) {
 			return false, fmt.Errorf("unexpected CA data: %v", files["ca"])
 		}
-		if !reflect.DeepEqual(files["cert"], []byte("certificate bytes")) {
+		if !reflect.DeepEqual(files["cert"], selfSignedExampleCertificate) {
 			return false, fmt.Errorf("unexpected certificate data: %v", files["cert"])
 		}
 		return true, nil
@@ -161,7 +161,7 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 
 	// Setup a routine to issue/sign the request IF it is created
 	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
 	defer close(stopCh)
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {

@@ -39,6 +39,27 @@ import (
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
+// Self signed certificate valid for 'example.com' (and probably expired by the time this is read).
+// This is used during test fixtures as the test driver attempts to parse the PEM certificate data,
+// so we can't just use any random bytes.
+var selfSignedExampleCertificate = []byte(`-----BEGIN CERTIFICATE-----
+MIICxjCCAa6gAwIBAgIRAI0W8ofWt2fD+J7Cha10KwwwDQYJKoZIhvcNAQELBQAw
+ADAeFw0yMjA5MTMwODI0MDBaFw0yMjEyMTIwODI0MDBaMAAwggEiMA0GCSqGSIb3
+DQEBAQUAA4IBDwAwggEKAoIBAQDR2ktXXbuJPZhudwfbwiYuKjb7BfehfuRZtme4
+HNvIhf0ABavuK4uRlKAKXRt1SZWMzm6P7NpTSOHjlxoBluZKFsgQbtNYYC8cBOMr
+1TuU9UwAD6U4Lw+obWQppwaEYIifdSVWUqphRT2I6EJONEB9ZUr0gHMKJ2sjl163
+WseSDyjPHkEM3wmpHpdDfYjNQRZ9sKB4J4/R8maW1IPpzltbryNQMfVJCYA7SjvJ
+KZK5cyhabqNVeBhjBSp+UczQVrJ4ruam3i4LFUbu7DVJ/60C8knhFxGJZ5uaPbOd
+eStraFOp50S3JbSpymq2m8c02ZsunUYiWCXGoh/UqrfYViVVAgMBAAGjOzA5MA4G
+A1UdDwEB/wQEAwIFoDAMBgNVHRMBAf8EAjAAMBkGA1UdEQEB/wQPMA2CC2V4YW1w
+bGUuY29tMA0GCSqGSIb3DQEBCwUAA4IBAQCkAvvWIUgdpuukL8nqX3850FtHl8r9
+I9oCra4Tv7fxsggFMhIbrVUjzE0NCB/kTjr5j/KFid9TFtbBo7bvYRKI1Qx12y28
+CTvY1y5BqFN/lT917B+8lrWyvxsbtQ0Xhvj9JgbLhGQutR4J+ee1sKZTPqP/sSGl
+PfY1JD5zWYWXWweLAR9hTp62SL6KVfsTT77jw0foehEKxfJbZY2wkdUS5GFMB8/a
+KQ+2l7/qPU8XL8whXEsifoJJ+U66v3cfsH0PIhTV2JKhagljdTVf333JBD/z49qv
+vnEIALrtIClFU6D/mTU5wyHhN29llwfjUgJrmYWqoWTZSiwGS6YmZpry
+-----END CERTIFICATE-----`)
+
 func TestIssuesCertificate(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
@@ -69,7 +90,7 @@ func TestIssuesCertificate(t *testing.T) {
 	defer stop()
 
 	stopCh := make(chan struct{})
-	go testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	go testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
 	defer close(stopCh)
 
 	tmpDir, err := os.MkdirTemp("", "*")
@@ -98,7 +119,7 @@ func TestIssuesCertificate(t *testing.T) {
 	if !reflect.DeepEqual(files["ca"], []byte("ca bytes")) {
 		t.Errorf("unexpected CA data: %v", files["ca"])
 	}
-	if !reflect.DeepEqual(files["cert"], []byte("certificate bytes")) {
+	if !reflect.DeepEqual(files["cert"], selfSignedExampleCertificate) {
 		t.Errorf("unexpected certificate data: %v", files["cert"])
 	}
 }
@@ -150,7 +171,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 
 	// Set up a goroutine that automatically issues all CertificateRequests
 	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "testns", stopCh, []byte("certificate bytes"), []byte("ca bytes"))
+	go testutil.IssueAllRequests(t, opts.Client, "testns", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
 	defer close(stopCh)
 
 	// Call NodePublishVolume
