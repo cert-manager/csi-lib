@@ -26,37 +26,148 @@
   };
 
   outputs = { self, nixpkgs, flake-utils }:
+    let
+      # We only source go files to have better cache hits when actively
+      # working on non-go files.
+      src = nixpkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
+      vendorSha256 = "sha256-jxiwax8g+ZtiR66UFUfMt5QQ7lGAH6wR3iPugmFZ/hc=";
+      src-e2e = nixpkgs.lib.sourceFilesBySuffices ./test/e2e [ ".go" "go.mod" "go.sum" ];
+      csi-lib-e2e-vendorSha256 = "sha256-AlovNqQCh+Yvw0Y6zRc24mzLqxMobjjip7Yhi004ROM=";
+
+      # Container images can be fetch using the following:
+      # $ nix-shell -p nix-prefetch-docker
+      # $ nix-prefetch-docker --image-name quay.io/jetstack/cert-manager-controller --image-tag v1.9.1 --arch amd64 --os linux
+      cert-manager-version = "1.9.1";
+      cert-manager-controller = rec {
+        imageName = "quay.io/jetstack/cert-manager-controller";
+        finalImageName = "quay.io/jetstack/cert-manager-controller";
+        finalImageTag = "v${cert-manager-version}";
+        os = "linux";
+        imageDigest = "sha256:81a5e25e2ecf63b96d6a0be28348d08a3055ea75793373109036977c24e34cf0";
+        x86_64-linux = {
+          sha256 = "0k7kv02zy456n3fg5d4k1ysl7jnrr5k11249pxdwf5xdxayppjz7";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "0h1zsnhshb55cw21x7cvndy3nilar65cdxa2n83zm6qf1a7d6sz8";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      cert-manager-webhook = rec {
+        imageName = "quay.io/jetstack/cert-manager-webhook";
+        finalImageName = "quay.io/jetstack/cert-manager-webhook";
+        finalImageTag = "v${cert-manager-version}";
+        imageDigest = "sha256:4ab2982a220e1c719473d52d8463508422ab26e92664732bfc4d96b538af6b8a";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "0gg404ypk9drjmmm0bfws5p20433bvgail7181bljlxdprywsck1";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "06qdf6aplkk7klszp62rf3my6drwdinpp8c3drnamr45b828b69v";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      cert-manager-cainjector = rec {
+        imageName = "quay.io/jetstack/cert-manager-cainjector";
+        finalImageName = "quay.io/jetstack/cert-manager-cainjector";
+        finalImageTag = "v${cert-manager-version}";
+        imageDigest = "sha256:df7f0b5186ddb84eccb383ed4b10ec8b8e2a52e0e599ec51f98086af5f4b4938";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "1ybl4sca2f2zslxa0rspriln275m30lpzamnad0p9wfh131gnfxd";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "1yskd7scwk3lgiz1f9akpgp073856yi4z3njpfvg1kw7c91dnr1l";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      cert-manager-ctl = rec {
+        imageName = "quay.io/jetstack/cert-manager-ctl";
+        finalImageName = "quay.io/jetstack/cert-manager-ctl";
+        finalImageTag = "v${cert-manager-version}";
+        imageDigest = "sha256:468c868b2cbae19a5d54d34b6f1c27fe54b0b3988a6d8cab74455f5411d95e96";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "1r7a82x6cp936dnp6jlm6k74gkjwmzx23m0bad6j85gycxy7klgw";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "1sjjx0yjagh7m7lav6ymysms6h4pbpwpmp7xqzrdpph4dcq065bh";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      csi-node-driver-registrar = rec {
+        imageName = "k8s.gcr.io/sig-storage/csi-node-driver-registrar";
+        finalImageName = "k8s.gcr.io/sig-storage/csi-node-driver-registrar";
+        finalImageTag = "v2.5.0";
+        imageDigest = "sha256:4fd21f36075b44d1a423dfb262ad79202ce54e95f5cbc4622a6c1c38ab287ad6";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "1zb161ak2chhblv1yq86j34l2r2i2fsnk4zsvrwzxrsbpw42wg05";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "0hdjhm69fr9dz4msn3bll250mhwkxzm31k5b7wf3yynibrbanw1c";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      kind-node = rec {
+        imageName = "kindest/node";
+        finalImageName = "kindest/node";
+        finalImageTag = "v1.25.0";
+        imageDigest = "sha256:428aaa17ec82ccde0131cb2d1ca6547d13cf5fdabcc0bbecf749baa935387cbf";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "1h80nc6r2msgad8wngyb1bvdc470z4w5msz3dgy2syi6yrm0ijdk";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "1wssixpg4bcjl65s1361n41ccr2l3aad9dg1vhp6fvxdvlzj2r60";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+      busybox = rec {
+        imageName = "busybox";
+        finalImageName = "busybox";
+        finalImageTag = "latest";
+        imageDigest = "sha256:20142e89dab967c01765b0aea3be4cec3a5957cc330f061e5503ef6168ae6613";
+        os = "linux";
+        x86_64-linux = {
+          sha256 = "01rjvdi19287bqgl19wmkp4srn49xlr8bik8r0fhz7rfmh3lqa1g";
+          arch = "amd64";
+        };
+        aarch64-linux = {
+          sha256 = "1yn3fhkii1c2h2d103xg5j1nsh6bszsjp42jnz9mxv5way6ca7yx";
+          arch = "arm64";
+        };
+        x86_64-darwin = x86_64-linux;
+        aarch64-darwin = aarch64-linux;
+      };
+
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-
-        # We only source go files to have better cache hits when actively
-        # working on non-go files.
-        src = pkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
-        vendorSha256 = "sha256-jxiwax8g+ZtiR66UFUfMt5QQ7lGAH6wR3iPugmFZ/hc=";
-        src-e2e = pkgs.lib.sourceFilesBySuffices ./test/e2e [ ".go" "go.mod" "go.sum" ];
-        csi-lib-e2e-vendorSha256 = "sha256-AlovNqQCh+Yvw0Y6zRc24mzLqxMobjjip7Yhi004ROM=";
-
-        e2e-cert-manager-version = "1.9.1";
-        e2e-cert-manager-controller-digest = "sha256:cd9bf3d48b6b8402a2a8b11953f9dc0275ba4beec14da47e31823a0515cde7e2";
-        e2e-cert-manager-controller-sha256 = "sha256-NQcTUOuqmHDWqD8kMhE8AApZmsNa3ElXlHe5qyCrSJs=";
-        e2e-cert-manager-webhook-digest = "sha256:4ab2982a220e1c719473d52d8463508422ab26e92664732bfc4d96b538af6b8a";
-        e2e-cert-manager-webhook-sha256 = "sha256-Nr1xSnXhIdobf3vPqnf8iS/8FbXN+yEEz+KpdmVKB3w=";
-        e2e-cert-manager-cainjector-digest = "sha256:df7f0b5186ddb84eccb383ed4b10ec8b8e2a52e0e599ec51f98086af5f4b4938";
-        e2e-cert-manager-cainjector-sha256 = "sha256-Bf9AJzjwnsF3oi37UAMa9DN9LXZ2AMlt9kjpsRyFBHg=";
-        e2e-cert-manager-ctl-digest = "sha256:468c868b2cbae19a5d54d34b6f1c27fe54b0b3988a6d8cab74455f5411d95e96";
-        e2e-cert-manager-ctl-sha256 = "sha256-D0ZOewtFI3on6U2ALdbBZZwlwA6uPkyQLXnCbMlZyoQ=";
-
-        e2e-kind-node-version = "1.25.0";
-        e2e-kind-node-digest = "sha256:428aaa17ec82ccde0131cb2d1ca6547d13cf5fdabcc0bbecf749baa935387cbf";
-        e2e-kind-node-sha256 = "sha256-s8kIavYmei38a+PrWjj54BDW9grLP8tRU09XkQ2zAME=";
-
-        csi-node-driver-registrar-version = "1.2.0";
-        csi-node-driver-registrar-digest = "sha256:89cdb2a20bdec89b75e2fbd82a67567ea90b719524990e772f2704b19757188d";
-        csi-node-driver-registrar-sha256 = "sha256-yve52Xxoyc00lOJGPACijt+3VQX6ngXtfl6nGqbFsIw=";
-
-        e2e-busybox-digest = "sha256:b8f68c62fe862281bf598060f15cb080ef778dc9db19f136d19a3531ffcb9aa0";
-        e2e-busybox-sha256 = "sha256-E0PakwKrCGFybyKC3BW/LW43oHiiCXQuT4dKtHrdNc4=";
 
         cert-manager-csi = pkgs.buildGo119Module {
           name = "cert-manager-csi";
@@ -73,7 +184,7 @@
           # We need to use a custom `buildPhase` so that we can build the e2e
           # binary using `go test` instead of `go build`.
           buildPhase = ''
-            go test -v --race -o csi-lib-e2e -c ./.
+            go test -v --race -o $GOPATH/bin/csi-lib-e2e -c ./.
           '';
         };
 
@@ -93,80 +204,60 @@
         };
 
         cert-manager-helm-chart = pkgs.fetchurl {
-          url = "https://charts.jetstack.io/charts/cert-manager-v${e2e-cert-manager-version}.tgz";
+          url = "https://charts.jetstack.io/charts/cert-manager-v${cert-manager-version}.tgz";
           sha256 = "sha256-Ricxd7XKaTCvgEfNUr8LeEyEgqwELngS0IZDwomGktU=";
         };
 
-        kind-node-image = pkgs.dockerTools.pullImage{
-          imageName = "kindest/node";
-          imageDigest = e2e-kind-node-digest;
-          sha256 = e2e-kind-node-sha256;
-          finalImageTag = "v${e2e-kind-node-version}";
-          finalImageName = "kindest/node";
+        cert-manager-controller-image = pkgs.dockerTools.pullImage {
+          inherit (cert-manager-controller) imageName finalImageName finalImageTag imageDigest os;
+          inherit (cert-manager-controller.${system}) sha256 arch;
         };
 
-        cert-manager-controller-image = pkgs.dockerTools.pullImage{
-          imageName = "quay.io/jetstack/cert-manager-controller";
-          imageDigest = e2e-cert-manager-controller-digest;
-          sha256 = e2e-cert-manager-controller-sha256;
-          finalImageTag = e2e-cert-manager-version;
-          finalImageName = "quay.io/jetstack/cert-manager-controller";
+        cert-manager-webhook-image = pkgs.dockerTools.pullImage {
+          inherit (cert-manager-webhook) imageName finalImageName finalImageTag imageDigest os;
+          inherit (cert-manager-webhook.${system}) sha256 arch;
         };
 
-        cert-manager-webhook-image = pkgs.dockerTools.pullImage{
-          imageName = "quay.io/jetstack/cert-manager-webhook";
-          imageDigest = e2e-cert-manager-webhook-digest;
-          sha256 = e2e-cert-manager-webhook-sha256;
-          finalImageTag = e2e-cert-manager-version;
-          finalImageName = "quay.io/jetstack/cert-manager-webhook";
+        cert-manager-cainjector-image = pkgs.dockerTools.pullImage {
+          inherit (cert-manager-cainjector) imageName finalImageName finalImageTag imageDigest os;
+          inherit (cert-manager-cainjector.${system}) sha256 arch;
         };
 
-        cert-manager-cainjector-image = pkgs.dockerTools.pullImage{
-          imageName = "quay.io/jetstack/cert-manager-cainjector";
-          imageDigest = e2e-cert-manager-cainjector-digest;
-          sha256 = e2e-cert-manager-cainjector-sha256;
-          finalImageTag = e2e-cert-manager-version;
-          finalImageName = "quay.io/jetstack/cert-manager-cainjector";
+        cert-manager-ctl-image = pkgs.dockerTools.pullImage {
+          inherit (cert-manager-ctl) imageName finalImageName finalImageTag imageDigest os;
+          inherit (cert-manager-ctl.${system}) sha256 arch;
         };
 
-        cert-manager-ctl-image = pkgs.dockerTools.pullImage{
-          imageName = "quay.io/jetstack/cert-manager-ctl";
-          imageDigest = e2e-cert-manager-ctl-digest;
-          sha256 = e2e-cert-manager-ctl-sha256;
-          finalImageTag = e2e-cert-manager-version;
-          finalImageName = "quay.io/jetstack/cert-manager-ctl";
+        csi-node-driver-registrar-image = pkgs.dockerTools.pullImage {
+          inherit (csi-node-driver-registrar) imageName finalImageName finalImageTag imageDigest os;
+          inherit (csi-node-driver-registrar.${system}) sha256 arch;
         };
 
-        csi-node-driver-registrar-image = pkgs.dockerTools.pullImage{
-          imageName = "quay.io/k8scsi/csi-node-driver-registrar";
-          imageDigest = csi-node-driver-registrar-digest;
-          sha256 = csi-node-driver-registrar-sha256;
-          finalImageTag = "v${csi-node-driver-registrar-version}";
-          finalImageName = "quay.io/k8scsi/csi-node-driver-registrar";
+        kind-node-image = pkgs.dockerTools.pullImage {
+          inherit (kind-node) imageName finalImageName finalImageTag imageDigest os;
+          inherit (kind-node.${system}) sha256 arch;
         };
 
-        busybox-image = pkgs.dockerTools.pullImage{
-          imageName = "busybox";
-          imageDigest = e2e-busybox-digest;
-          sha256 = e2e-busybox-sha256;
-          finalImageTag = "latest";
-          finalImageName = "busybox";
+        busybox-image = pkgs.dockerTools.pullImage {
+          inherit (busybox) imageName finalImageName finalImageTag imageDigest os;
+          inherit (busybox.${system}) sha256 arch;
         };
 
       in {
         packages = {
           default = containerImage;
           container = containerImage;
-          inherit cert-manager-helm-chart;
-          inherit kind-node-image;
-          inherit cert-manager-controller-image;
-          inherit cert-manager-webhook-image;
-          inherit cert-manager-cainjector-image;
-          inherit cert-manager-ctl-image;
-          inherit cert-manager-csi;
-          inherit busybox-image;
-          inherit csi-node-driver-registrar-image;
-          inherit csi-lib-e2e;
+          inherit
+            cert-manager-helm-chart
+            cert-manager-controller-image
+            cert-manager-webhook-image
+            cert-manager-cainjector-image
+            cert-manager-ctl-image
+            cert-manager-csi
+            csi-node-driver-registrar-image
+            kind-node-image
+            busybox-image
+            csi-lib-e2e;
         };
         devShells.default = pkgs.mkShell {
           buildInputs = [
@@ -175,6 +266,7 @@
             pkgs.ginkgo
             pkgs.docker
             pkgs.kind
+            pkgs.skopeo
             cert-manager-csi
             csi-lib-e2e
           ];
