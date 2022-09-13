@@ -187,6 +187,9 @@ func NewManager(opts Options) (*Manager, error) {
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
+		requestNameGenerator: func() string {
+			return string(uuid.NewUUID())
+		},
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -285,6 +288,10 @@ type Manager struct {
 
 	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
 	backoffConfig wait.Backoff
+
+	// requestNameGenerator generates a new random name for a certificaterequest object
+	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
+	requestNameGenerator func() string
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -467,7 +474,7 @@ func (m *Manager) labelSelectorForVolume(volumeID string) (labels.Selector, erro
 func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csrBundle *CertificateRequestBundle, csrPEM []byte) (*cmapi.CertificateRequest, error) {
 	req := &cmapi.CertificateRequest{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        string(uuid.NewUUID()),
+			Name:        m.requestNameGenerator(),
 			Namespace:   csrBundle.Namespace,
 			Annotations: csrBundle.Annotations,
 			Labels: map[string]string{
