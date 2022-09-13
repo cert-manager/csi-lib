@@ -8,12 +8,11 @@ import (
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
-	testpkg "github.com/cert-manager/cert-manager/pkg/controller/test"
 	"github.com/go-logr/logr/testr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
-	coretesting "k8s.io/client-go/testing"
+	"k8s.io/utils/strings/slices"
 
 	internalapi "github.com/cert-manager/csi-lib/internal/api"
 	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
@@ -280,118 +279,106 @@ func TestManager_ManageVolume_beginsManagingAndProceedsIfNotReady(t *testing.T) 
 }
 
 func TestManager_cleanupStaleRequests(t *testing.T) {
-
-	ctx := context.TODO()
-	log := testr.New(t)
-
 	type fields struct {
-		nodeNameHash         string
+		nodeID               string
 		maxRequestsPerVolume int
 	}
-
 	tests := []struct {
-		name     string
-		builder  *testpkg.Builder
-		fields   fields
-		volumeID string
-		wantErr  bool
+		name        string
+		objects     []*cmapi.CertificateRequest
+		toBeDeleted []string
+		fields      fields
+		wantErr     bool
 	}{
 		{
 			name: "maxRequestsPerVolume=1: all stale CSRs should be deleted",
-			builder: &testpkg.Builder{
-				T: t,
-
-				CertManagerObjects: []runtime.Object{
-					cr("cr-1", "ns-1", "nodeNameHash-1", "volumeID-1"),
-					cr("cr-2", "ns-1", "nodeNameHash-1", "volumeID-1"),
-				},
-				ExpectedActions: []testpkg.Action{
-					testpkg.NewAction(coretesting.NewDeleteAction(
-						cmapi.SchemeGroupVersion.WithResource("certificaterequests"),
-						"ns-1", "cr-2")),
-					testpkg.NewAction(coretesting.NewDeleteAction(
-						cmapi.SchemeGroupVersion.WithResource("certificaterequests"),
-						"ns-1", "cr-1")),
-				},
+			objects: []*cmapi.CertificateRequest{
+				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
+				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
+			toBeDeleted: []string{"cr-2", "cr-1"},
 			fields: fields{
-				nodeNameHash:         "nodeNameHash-1",
+				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 1,
 			},
-			volumeID: "volumeID-1",
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
 			name: "maxRequestsPerVolume=2: 1 stale CSRs should be left",
-			builder: &testpkg.Builder{
-				T: t,
-
-				CertManagerObjects: []runtime.Object{
-					cr("cr-1", "ns-1", "nodeNameHash-1", "volumeID-1"),
-					cr("cr-2", "ns-1", "nodeNameHash-1", "volumeID-1"),
-				},
-				ExpectedActions: []testpkg.Action{
-					testpkg.NewAction(coretesting.NewDeleteAction(
-						cmapi.SchemeGroupVersion.WithResource("certificaterequests"),
-						"ns-1", "cr-2")),
-				},
+			objects: []*cmapi.CertificateRequest{
+				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
+				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
+			toBeDeleted: []string{"cr-2"},
 			fields: fields{
-				nodeNameHash:         "nodeNameHash-1",
+				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 2,
 			},
-			volumeID: "volumeID-1",
-			wantErr:  false,
+			wantErr: false,
 		},
 		{
 			name: "maxRequestsPerVolume=1: unrelated CSRs should NOT be deleted",
-			builder: &testpkg.Builder{
-				T: t,
-
-				CertManagerObjects: []runtime.Object{
-					cr("cr-1", "ns-1", "nodeNameHash-1", "volumeID-2"),
-					cr("cr-2", "ns-1", "nodeNameHash-1", "volumeID-2"),
-				},
-				ExpectedActions: []testpkg.Action{},
+			objects: []*cmapi.CertificateRequest{
+				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-2"),
+				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-2"),
 			},
 			fields: fields{
-				nodeNameHash:         "nodeNameHash-1",
+				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 1,
 			},
-			volumeID: "volumeID-1",
-			wantErr:  false,
+			wantErr: false,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.builder.Init()
-			cmClient := tt.builder.CMClient
-			crLister := tt.builder.SharedInformerFactory.Certmanager().V1().CertificateRequests().Lister()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			log := testr.New(t)
 
-			tt.builder.Start()
-			defer tt.builder.CheckAndFinish()
-
-			m := &Manager{
-				client:               cmClient,
-				lister:               crLister,
-				nodeNameHash:         tt.fields.nodeNameHash,
-				maxRequestsPerVolume: tt.fields.maxRequestsPerVolume,
+			opts := newDefaultTestOptions(t)
+			opts.MaxRequestsPerVolume = test.fields.maxRequestsPerVolume
+			opts.NodeID = test.fields.nodeID
+			m, err := NewManager(opts)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if err := m.cleanupStaleRequests(ctx, log, tt.volumeID); (err != nil) != tt.wantErr {
-				t.Errorf("cleanupStaleRequests() error = %v, wantErr %v", err, tt.wantErr)
+			defer m.Stop()
+
+			for _, req := range test.objects {
+				if _, err := m.client.CertmanagerV1().CertificateRequests(req.Namespace).Create(ctx, req, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := m.cleanupStaleRequests(ctx, log, "volumeID-1"); (err != nil) != test.wantErr {
+				t.Errorf("cleanupStaleRequests() error = %v, wantErr %v", err, test.wantErr)
+			}
+
+			for _, req := range test.objects {
+				_, err := m.client.CertmanagerV1().CertificateRequests(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+				if err != nil && !apierrors.IsNotFound(err) {
+					t.Fatal(err)
+				}
+				exists := !apierrors.IsNotFound(err)
+				shouldExist := !slices.Contains(test.toBeDeleted, req.Name)
+				if exists && !shouldExist {
+					t.Errorf("expected %q to be deleted but it was not", req.Name)
+				}
+				if !exists && shouldExist {
+					t.Errorf("expected %q to exist but it does not", req.Name)
+				}
 			}
 		})
 	}
 }
 
-func cr(crName, crNamespace, nodeNameHash, VolumeID string) *cmapi.CertificateRequest {
+func cr(crName, crNamespace, nodeID, volumeID string) *cmapi.CertificateRequest {
 	return &cmapi.CertificateRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      crName,
 			Namespace: crNamespace,
 			Labels: map[string]string{
-				internalapi.NodeIDHashLabelKey:   nodeNameHash,
-				internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier(VolumeID),
+				internalapi.NodeIDHashLabelKey:   internalapiutil.HashIdentifier(nodeID),
+				internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier(volumeID),
 			},
 		}}
 }
