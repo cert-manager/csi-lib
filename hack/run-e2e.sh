@@ -46,7 +46,7 @@ echo "docker"
 docker version
 
 echo "> Creating cluster..."
-docker load < $(nix build --print-out-paths '.#kind-node-image')
+docker load < $(nix build --print-out-paths '.#kindest/node')
 trap delete_cluster EXIT
 kind create cluster --name cert-manager-csi-e2e
 
@@ -54,23 +54,23 @@ kind get kubeconfig --name cert-manager-csi-e2e > "$TMP_DIR/kubeconfig"
 export KUBECONFIG="$TMP_DIR/kubeconfig"
 
 echo "> Loading cert-manager images..."
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#cert-manager-controller-image') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#cert-manager-webhook-image') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#cert-manager-cainjector-image') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#cert-manager-ctl-image') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-controller') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-webhook') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-cainjector') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-ctl') &
 
 echo "> Loading busybox image..."
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#busybox-image') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#busybox') &
 
 echo "> Loading csi-lib docker image..."
 kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout $(nix build --print-out-paths '.#container')) &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#csi-node-driver-registrar-image') &
+kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#sig-storage/csi-node-driver-registrar') &
 
 wait
 
 echo "> Installing cert-manager..."
 helm install cert-manager --set installCRDs=true -n cert-manager --create-namespace --wait \
-  $(nix build --print-out-paths '.#cert-manager-helm-chart')
+  $(nix build --print-out-paths '.#helm/jetstack/cert-manager')
 
 echo "> Installing csi-driver..."
 kubectl apply -f ./deploy/cert-manager-csi-driver.yaml
