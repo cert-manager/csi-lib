@@ -37,7 +37,7 @@
       # We only source go files to have better cache hits when actively
       # working on non-go files.
       src = nixpkgs.lib.sourceFilesBySuffices ./. [ ".go" "go.mod" "go.sum" ];
-      vendorSha256 = "sha256-jxiwax8g+ZtiR66UFUfMt5QQ7lGAH6wR3iPugmFZ/hc=";
+      vendorSha256 = "sha256-yQ0MzlVIq57bm20T8VrDPZpJkhaN1Hh7eRo4j1zOgAI=";
 
       src-e2e = nixpkgs.lib.sourceFilesBySuffices ./test/e2e [ ".go" "go.mod" "go.sum" ];
       csi-lib-e2e-vendorSha256 = "sha256-AlovNqQCh+Yvw0Y6zRc24mzLqxMobjjip7Yhi004ROM=";
