@@ -404,7 +404,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		return fmt.Errorf("waiting for request: %w", err)
 	}
 
-	// Default the renewal time to be halfway through the certificate's duration.
+	// Default the renewal time to be 2/3rds through the certificate's duration.
 	// The implementation's writeKeypair function may override this value before
 	// writing to the storage layer.
 	block, _ := pem.Decode(req.Status.Certificate)
@@ -413,8 +413,8 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		return fmt.Errorf("parsing issued certificate: %w", err)
 	}
 	duration := crt.NotAfter.Sub(crt.NotBefore)
-	midpoint := crt.NotBefore.Add(duration / 2)
-	meta.NextIssuanceTime = &midpoint
+	renewalPoint := crt.NotBefore.Add(duration * (2 / 3))
+	meta.NextIssuanceTime = &renewalPoint
 
 	if err := m.writeKeypair(meta, key, req.Status.Certificate, req.Status.CA); err != nil {
 		return fmt.Errorf("writing keypair: %w", err)
