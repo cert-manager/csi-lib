@@ -189,6 +189,9 @@ func NewManager(opts Options) (*Manager, error) {
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
+		requestNameGenerator: func() string {
+			return string(uuid.NewUUID())
+		},
 	}
 
 	vols, err := opts.MetadataReader.ListVolumes()
@@ -287,6 +290,10 @@ type Manager struct {
 
 	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
 	backoffConfig wait.Backoff
+
+	// requestNameGenerator generates a new random name for a certificaterequest object
+	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
+	requestNameGenerator func() string
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -334,7 +341,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 
 	// Poll every 1s for the CertificateRequest to be ready
 	lastFailureReason := ""
-	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilWithContext(ctx, time.Second, func(ctx context.Context) (done bool, err error) {
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			// A NotFound error implies something deleted the resource - fail
@@ -358,8 +365,9 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 			return false, fmt.Errorf("request %q has been denied by the approval plugin: %s", updatedReq.Name, cond.Message)
 		}
 
-		if !apiutil.CertificateRequestIsApproved(updatedReq) {
-			lastFailureReason = "request has not yet been approved by approval plugin"
+		isApproved := apiutil.CertificateRequestIsApproved(updatedReq)
+		if !isApproved {
+			lastFailureReason = fmt.Sprintf("request %q has not yet been approved by approval plugin", updatedReq.Name)
 			// we don't stop execution here, as some versions of cert-manager (and some external issuer plugins)
 			// may not be aware/utilise approval.
 			// If the certificate is still issued despite never being approved, the CSI driver should continue
@@ -368,11 +376,11 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 
 		readyCondition := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionReady)
 		if readyCondition == nil {
-			if apiutil.CertificateRequestIsApproved(updatedReq) {
-				lastFailureReason = "request has no ready condition"
+			// only overwrite the approval failure message if the request is actually approved
+			// otherwise we may hide more useful information from the user by accident.
+			if isApproved {
+				lastFailureReason = fmt.Sprintf("request %q has no ready condition", updatedReq.Name)
 			}
-			log.V(2).Info("CertificateRequest is still pending")
-			// Issuance is still pending
 			return false, nil
 		}
 
@@ -382,11 +390,12 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
-			lastFailureReason = fmt.Sprintf("request pending: %v", readyCondition.Message)
-			log.V(2).Info("CertificateRequest is still pending")
+			if isApproved {
+				lastFailureReason = fmt.Sprintf("request %q is pending: %v", updatedReq.Name, readyCondition.Message)
+			}
 			return false, nil
 		default:
-			lastFailureReason = fmt.Sprintf("unrecognised Ready condition state (%s): %s", readyCondition.Reason, readyCondition.Message)
+			lastFailureReason = fmt.Sprintf("request %q has unrecognised Ready condition state (%s): %s", updatedReq.Name, readyCondition.Reason, readyCondition.Message)
 			log.Info("unrecognised state for Ready condition", "request_namespace", updatedReq.Namespace, "request_name", updatedReq.Name, "condition", *readyCondition)
 			return false, nil
 		}
@@ -396,7 +405,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		// writing out signed certificate
 		req = updatedReq
 		return true, nil
-	}, ctx.Done()); err != nil {
+	}); err != nil {
 		if errors.Is(err, wait.ErrWaitTimeout) {
 			// try and return a more helpful error message than "timed out waiting for the condition"
 			return fmt.Errorf("waiting for request: %s", lastFailureReason)
@@ -481,7 +490,7 @@ func (m *Manager) labelSelectorForVolume(volumeID string) (labels.Selector, erro
 func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csrBundle *CertificateRequestBundle, csrPEM []byte) (*cmapi.CertificateRequest, error) {
 	req := &cmapi.CertificateRequest{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        string(uuid.NewUUID()),
+			Name:        m.requestNameGenerator(),
 			Namespace:   csrBundle.Namespace,
 			Annotations: csrBundle.Annotations,
 			Labels: map[string]string{

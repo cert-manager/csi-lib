@@ -36,6 +36,7 @@ import (
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
+	testdriver "github.com/cert-manager/csi-lib/test/driver"
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
@@ -44,7 +45,7 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 	clock := fakeclock.NewFakeClock(time.Now())
 
 	calls := 0
-	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: true,
@@ -129,7 +130,7 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
-	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:              store,
 		Clock:              clock,
 		ContinueOnNotReady: false,

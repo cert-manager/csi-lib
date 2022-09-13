@@ -18,152 +18,24 @@ package util
 
 import (
 	"context"
-	"crypto"
-	"crypto/x509"
 	"fmt"
-	"math"
-	"net"
 	"testing"
 	"time"
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
-	fakeclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
-	"github.com/container-storage-interface/spec/lib/go/csi"
-	"github.com/go-logr/logr"
-	logrtesting "github.com/go-logr/logr/testing"
-	"google.golang.org/grpc"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/mount-utils"
-	"k8s.io/utils/clock"
-
-	"github.com/cert-manager/csi-lib/driver"
-	"github.com/cert-manager/csi-lib/manager"
-	"github.com/cert-manager/csi-lib/metadata"
-	"github.com/cert-manager/csi-lib/storage"
 )
 
-type DriverOptions struct {
-	Clock   clock.Clock
-	Store   storage.Interface
-	Log     *logr.Logger
-	Client  cmclient.Interface
-	Mounter mount.Interface
-
-	NodeID               string
-	MaxRequestsPerVolume int
-	ContinueOnNotReady   bool
-
-	GeneratePrivateKey manager.GeneratePrivateKeyFunc
-	GenerateRequest    manager.GenerateRequestFunc
-	SignRequest        manager.SignRequestFunc
-	WriteKeypair       manager.WriteKeypairFunc
-	ReadyToRequest     manager.ReadyToRequestFunc
-}
-
-func RunTestDriver(t *testing.T, opts DriverOptions) (DriverOptions, csi.NodeClient, func()) {
-	if opts.Log == nil {
-		logger := logrtesting.NewTestLogger(t)
-		opts.Log = &logger
-	}
-	if opts.Clock == nil {
-		opts.Clock = &clock.RealClock{}
-	}
-	if opts.Store == nil {
-		opts.Store = storage.NewMemoryFS()
-	}
-	if opts.Client == nil {
-		opts.Client = fakeclient.NewSimpleClientset()
-	}
-	if opts.Mounter == nil {
-		opts.Mounter = mount.NewFakeMounter(nil)
-	}
-	if opts.NodeID == "" {
-		opts.NodeID = "test-node"
-	}
-	if opts.GeneratePrivateKey == nil {
-		opts.GeneratePrivateKey = func(_ metadata.Metadata) (crypto.PrivateKey, error) {
-			return nil, nil
-		}
-	}
-	if opts.GenerateRequest == nil {
-		opts.GenerateRequest = func(_ metadata.Metadata) (*manager.CertificateRequestBundle, error) {
-			return &manager.CertificateRequestBundle{}, nil
-		}
-	}
-	if opts.SignRequest == nil {
-		opts.SignRequest = func(_ metadata.Metadata, _ crypto.PrivateKey, _ *x509.CertificateRequest) ([]byte, error) {
-			return []byte{}, nil
-		}
-	}
-	if opts.WriteKeypair == nil {
-		opts.WriteKeypair = func(_ metadata.Metadata, _ crypto.PrivateKey, _ []byte, _ []byte) error {
-			return nil
-		}
-	}
-
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("failed to setup test listener: %v", err)
-	}
-
-	m := manager.NewManagerOrDie(manager.Options{
-		Client:               opts.Client,
-		MetadataReader:       opts.Store,
-		Clock:                opts.Clock,
-		Log:                  opts.Log,
-		NodeID:               opts.NodeID,
-		MaxRequestsPerVolume: opts.MaxRequestsPerVolume,
-		GeneratePrivateKey:   opts.GeneratePrivateKey,
-		GenerateRequest:      opts.GenerateRequest,
-		SignRequest:          opts.SignRequest,
-		WriteKeypair:         opts.WriteKeypair,
-		ReadyToRequest:       opts.ReadyToRequest,
-		RenewalBackoffConfig: &wait.Backoff{Steps: math.MaxInt32}, // don't actually wait (i.e. set all backoff times to 0)
-	})
-
-	d := driver.NewWithListener(lis, *opts.Log, driver.Options{
-		DriverName:         "driver-name",
-		DriverVersion:      "v0.0.1",
-		NodeID:             opts.NodeID,
-		Store:              opts.Store,
-		Mounter:            opts.Mounter,
-		Manager:            m,
-		ContinueOnNotReady: opts.ContinueOnNotReady,
-	})
-
-	// start the driver
-	go func() {
-		if err := d.Run(); err != nil {
-			t.Fatalf("failed running driver: %v", err)
-		}
-	}()
-
-	// create a client connection to the grpc server
-	conn, err := grpc.Dial(lis.Addr().String(), grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("failed to dial test server: %v", err)
-	}
-
-	return opts, csi.NewNodeClient(conn), func() {
-		m.Stop()
-		if err := conn.Close(); err != nil {
-			t.Fatalf("error closing client connection: %v", err)
-		}
-		d.Stop()
-		lis.Close()
-	}
-}
-
-func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
-	if err := wait.PollUntil(time.Millisecond*50, func() (done bool, err error) {
-		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
+func waitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmclient.Interface, ns string) (*cmapi.CertificateRequest, error) {
+	var req *cmapi.CertificateRequest
+	if err := wait.PollUntilWithContext(ctx, time.Millisecond*50, func(ctx context.Context) (done bool, err error) {
+		reqs, err := client.CertmanagerV1().CertificateRequests(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, err
 		}
-
 		if len(reqs.Items) == 0 {
 			return false, nil
 		}
@@ -171,9 +43,19 @@ func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, 
 			return false, fmt.Errorf("more than one CertificateRequest created")
 		}
 
-		req := reqs.Items[0]
-		if len(req.Status.Certificate) != 0 {
-			return false, fmt.Errorf("unexpected certificate already issued")
+		req = &reqs.Items[0]
+		return true, nil
+	}); err != nil {
+		return nil, err
+	}
+	return req, nil
+}
+
+func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
+	if err := wait.PollUntil(time.Millisecond*50, func() (done bool, err error) {
+		req, err := waitAndGetOneCertificateRequestInNamespace(context.TODO(), client, namespace)
+		if err != nil {
+			return false, err
 		}
 
 		csr := req.DeepCopy()
@@ -193,6 +75,43 @@ func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, 
 	}, stopCh); err != nil {
 		t.Errorf("error automatically issuing certificaterequest: %v", err)
 	}
+}
+
+func SetCertificateRequestConditions(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, conditions ...cmapi.CertificateRequestCondition) {
+	if err := wait.PollUntilWithContext(ctx, time.Millisecond*50, func(ctx context.Context) (done bool, err error) {
+		req, err := waitAndGetOneCertificateRequestInNamespace(context.TODO(), client, namespace)
+		if err != nil {
+			return false, err
+		}
+
+		reqCopy := req.DeepCopy()
+		for _, cond := range conditions {
+			setCertificateRequestCondition(reqCopy, cond)
+		}
+
+		req, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(ctx, reqCopy, metav1.UpdateOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		return true, nil
+	}); err != nil {
+		t.Errorf("error automatically setting certificaterequest condition")
+	}
+}
+
+func SetOneCertificateRequestCondition(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, condition cmapi.CertificateRequestCondition) {
+	SetCertificateRequestConditions(ctx, t, client, namespace, condition)
+}
+
+func setCertificateRequestCondition(req *cmapi.CertificateRequest, newCondition cmapi.CertificateRequestCondition) {
+	for i, cond := range req.Status.Conditions {
+		if cond.Type == newCondition.Type {
+			req.Status.Conditions[i] = newCondition
+			return
+		}
+	}
+	req.Status.Conditions = append(req.Status.Conditions, newCondition)
 }
 
 func IssueAllRequests(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
