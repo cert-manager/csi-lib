@@ -36,13 +36,14 @@ import (
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
+	testdriver "github.com/cert-manager/csi-lib/test/driver"
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
 func TestIssuesCertificate(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
-	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
+	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
 		Store: store,
 		Clock: clock,
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
@@ -107,7 +108,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
-	opts, cl, stop := testutil.RunTestDriver(t, testutil.DriverOptions{
+	opts, cl, stop := testdriver.RunTestDriver(t, testdriver.DriverOptions{
 		Store:                store,
 		Clock:                clock,
 		MaxRequestsPerVolume: 1,
