@@ -56,7 +56,7 @@ spec:
         runAsUser: 2000
       containers:
         - name: my-frontend
-          image: busybox:latest
+          image: busybox:1.35.0
           volumeMounts:
           - mountPath: "/tls"
             name: tls

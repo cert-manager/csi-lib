@@ -1,5 +1,28 @@
 {
   "nodes": {
+    "cert-manager": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1663752623,
+        "narHash": "sha256-8xsROtMw4wpLCt/91tOi+uYLJKB/tOWKRufyc4MsxB8=",
+        "owner": "joshvanl",
+        "repo": "cm-nixpkgs",
+        "rev": "5cbd1c58e79e76a2b1e2de2cebe497c102df7a84",
+        "type": "github"
+      },
+      "original": {
+        "owner": "joshvanl",
+        "repo": "cm-nixpkgs",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "locked": {
         "lastModified": 1659877975,
@@ -17,11 +40,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1663071011,
-        "narHash": "sha256-HjPb5iEwKwyNpnkn4Wo2hptAU5TAmfXd30mxemXPBtg=",
+        "lastModified": 1663752925,
+        "narHash": "sha256-yIlReA0w74YyKnOWFNooI+wlTytYr6YQKg6N95v5puw=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "0caf7675ec9b90ab9ad309d7a993a13798eeaa26",
+        "rev": "19aa0eb4dec3c60436387771057de998298b3cd6",
         "type": "github"
       },
       "original": {
@@ -32,6 +55,7 @@
     },
     "root": {
       "inputs": {
+        "cert-manager": "cert-manager",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }

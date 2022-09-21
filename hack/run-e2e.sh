@@ -14,71 +14,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -o errexit
-set -o nounset
-set -o pipefail
+#set -o errexit
+#set -o nounset
+#set -o pipefail
+#
+#ginkgo version
+#kind version
+#echo "helm $(helm version)"
+#echo "kubectl $(kubectl version --client)"
+#echo "docker"
+#docker version
 
-delete_cluster() {
-  kind delete cluster --name cert-manager-csi-e2e
-}
-
-ROOT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )/.."
-cd "$ROOT_DIR"
-
-# Add user nix config so that flakes are enabled for the script.
-export NIX_USER_CONF_FILES=${ROOT_DIR}/hack/nix/nix.conf
-
-TMP_DIR=$(mktemp -d)
-trap "rm -rf $TMP_DIR" EXIT
-
-# If this environment variable is not set, then that means that we are no in a
-# nix shell, and the command was not invoked with `nix develop -c
-# ./hack/run-e2e.sh` or similar.
-if ! [ -v IN_NIX_SHELL ]; then
-  exec nix develop -c "${ROOT_DIR}/hack/run-e2e.sh"
-fi
-
-ginkgo version
-kind version
-echo "helm $(helm version)"
-echo "kubectl $(kubectl version --client)"
-echo "docker"
-docker version
-
-echo "> Creating cluster..."
-docker load < $(nix build --print-out-paths '.#kindest/node')
-trap delete_cluster EXIT
-kind create cluster --name cert-manager-csi-e2e
-
-kind get kubeconfig --name cert-manager-csi-e2e > "$TMP_DIR/kubeconfig"
-export KUBECONFIG="$TMP_DIR/kubeconfig"
-
-echo "> Loading cert-manager images..."
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-controller') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-webhook') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-cainjector') &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#jetstack/cert-manager-ctl') &
-
-echo "> Loading busybox image..."
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#busybox') &
-
-echo "> Loading csi-lib docker image..."
-kind load image-archive --name cert-manager-csi-e2e <(gzip --decompress --stdout $(nix build --print-out-paths '.#container')) &
-kind load image-archive --name cert-manager-csi-e2e $(nix build --print-out-paths '.#sig-storage/csi-node-driver-registrar') &
-
-wait
-
-echo "> Installing cert-manager..."
-helm install cert-manager --set installCRDs=true -n cert-manager --create-namespace --wait \
-  $(nix build --print-out-paths '.#helm/jetstack/cert-manager')
-
-echo "> Installing csi-driver..."
-kubectl apply -f ./deploy/cert-manager-csi-driver.yaml
-kubectl apply -f ./deploy/example
-kubectl get pods -A
-
-echo "> Waiting for all pods to be ready..."
-kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m
-
-echo "> Running tests"
-csi-lib-e2e
+#echo "> Loading docker images ..."
+#for IMAGE in ${DOCKER_IMAGES}; do
+#  docker load < "${IMAGE}" &
+#done
+#
+#wait
+#
+#echo "> Creating cluster ..."
+#kind create cluster --name cert-manager-csi-e2e
+#
+#kind get kubeconfig --name cert-manager-csi-e2e > "$TMP_DIR/kubeconfig"
+#export KUBECONFIG="$TMP_DIR/kubeconfig"
+#
+#echo "> Loading kind images ..."
+#for IMAGE in ${KIND_IMAGES}; do
+#  kind load docker-image --name cert-manager-csi-e2e "${IMAGE}" &
+#done
+#
+#wait
+#
+#echo "> Installing cert-manager..."
+#helm install cert-manager --set installCRDs=true -n cert-manager --create-namespace --wait \
+#  $(nix build --print-out-paths '.#chart-cert-manager')
+#
+#echo "> Installing csi-driver..."
+#kubectl apply -f ./deploy/cert-manager-csi-driver.yaml
+#kubectl apply -f ./deploy/example
+#kubectl get pods -A
+#
+#echo "> Waiting for all pods to be ready..."
+#kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m
+#
+#echo "> Running tests"
+#csi-lib-e2e
