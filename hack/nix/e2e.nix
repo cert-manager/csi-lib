@@ -36,78 +36,91 @@ let
     };
   };
 
-  test-vm = pkgs.nixosTest {
-    name = "csi-lib e2e test";
-    nodes = {
-      machine = { ... }: {
-        boot.kernelPackages = pkgs.linuxPackages;
-        networking.hostId = "deadbeef";
-        virtualisation = {
-          docker.enable = true;
-          diskSize = 5 * 1024;
-          memorySize = 4 * 1024;
-          cores = 8;
-        };
-        environment.systemPackages = [
-          pkgs.ginkgo pkgs.gzip pkgs.kind pkgs.docker
-          pkgs.kubernetes-helm pkgs.kubectl csi-lib-e2e
-        ];
-      };
-    };
+  test-runner = pkgs.vmTools.runInLinuxVM (
+    pkgs.runCommand "e2e-test-runner" {
+      memSize = 1024 * 10;
+      nativeBuildInputs = with pkgs; [
+        utillinux kmod curl bash ginkgo gzip kind docker
+        kubernetes-helm kubectl csi-lib-e2e
+      ];
+    } ''
+      #!/usr/bin/env bash
 
-    testScript = ''
-      start_all()
+      # Copyright 2022 The cert-manager Authors.
+      #
+      # Licensed under the Apache License, Version 2.0 (the "License");
+      # you may not use this file except in compliance with the License.
+      # You may obtain a copy of the License at
+      #
+      #     http://www.apache.org/licenses/LICENSE-2.0
+      #
+      # Unless required by applicable law or agreed to in writing, software
+      # distributed under the License is distributed on an "AS IS" BASIS,
+      # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+      # See the License for the specific language governing permissions and
+      # limitations under the License.
 
-      machine.succeed(
-        "ginkgo version",
-        "kind version",
-        "echo helm && helm version",
-        "echo kubectl && kubectl version --client",
-        "echo docker && docker version",
-      )
+      set -o errexit
+      set -o nounset
+      set -o pipefail
+
+      trap 'cp test-results.* $out' EXIT
+
+      modprobe overlay
+      # from https://github.com/tianon/cgroupfs-mount/blob/master/cgroupfs-mount
+      mount -t tmpfs -o uid=0,gid=0,mode=0755 cgroup /sys/fs/cgroup
+      cd /sys/fs/cgroup
+      for sys in $(awk '!/^#/ { if ($4 == 1) print $1 }' /proc/cgroups); do
+        mkdir -p $sys
+        if ! mountpoint -q $sys; then
+          if ! mount -n -t cgroup -o $sys cgroup $sys; then
+            rmdir $sys || true
+          fi
+        fi
+      done
+      dockerd -H tcp://127.0.0.1:5555 -H unix:///var/run/docker.sock &
+      until $(curl --output /dev/null --silent --connect-timeout 2 http://127.0.0.1:5555); do
+        printf '.'
+        sleep 1
+      done
+
+      ginkgo version
+      kind version
+      echo helm && helm version
+      echo kubectl && kubectl version --client
+      echo docker && docker version
 
       # Load kind image and create cluster.
-      machine.succeed(
-        "docker load --input='${e2e-deps.images.kindest-node}'",
-        "kind create cluster --image d3da246e125a",
-      )
+      docker load --input='${e2e-deps.images.kindest-node}'
+      kind create cluster --image d3da246e125a
 
       # Load kind images.
-      machine.succeed(
-        "kind load image-archive ${e2e-deps.images.cm-controller}",
-        "kind load image-archive ${e2e-deps.images.cm-webhook}",
-        "kind load image-archive ${e2e-deps.images.cm-cainjector}",
-        "kind load image-archive ${e2e-deps.images.cm-ctl}",
-        "kind load image-archive ${e2e-deps.images.busybox}",
-        "kind load image-archive ${e2e-deps.images.node-registrar}",
-        "kind load image-archive <(gzip --decompress --stdout ${csi-lib-image})",
-      )
+      kind load image-archive ${e2e-deps.images.cm-controller}
+      kind load image-archive ${e2e-deps.images.cm-webhook}
+      kind load image-archive ${e2e-deps.images.cm-cainjector}
+      kind load image-archive ${e2e-deps.images.cm-ctl}
+      kind load image-archive ${e2e-deps.images.busybox}
+      kind load image-archive ${e2e-deps.images.node-registrar}
+      kind load image-archive <(gzip --decompress --stdout ${csi-lib-image})
 
       # Install cert-manager and example csi-driver using csi-lib.
-      machine.succeed(
-        "helm install cert-manager --set installCRDs=true -n cert-manager \
-          --create-namespace ${e2e-deps.charts.cert-manager} --wait",
+       helm install cert-manager --set installCRDs=true -n cert-manager \
+        --create-namespace ${e2e-deps.charts.cert-manager} --wait
 
-        "kubectl apply -f ${e2e-deps.deploy}/cert-manager-csi-driver.yaml",
-        "kubectl apply -f ${e2e-deps.deploy}/example",
-        "kubectl get pods -A",
-        "kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m",
-      )
+       kubectl apply -f ${e2e-deps.deploy}/cert-manager-csi-driver.yaml
+       kubectl apply -f ${e2e-deps.deploy}/example
+       kubectl get pods -A
+       kubectl wait --for=condition=Ready pod --all --all-namespaces --timeout=5m
 
       # Run e2e binary against cluster. Capture logs.
       # Always return true to avoid failing the derivation build, instead
       # opting for writing the test logs and success result.
-      try:
-        machine.succeed("csi-lib-e2e &> test-results.log")
-      except:
-        machine.succeed("echo 1 > test-results.code")
-      else:
-        machine.succeed("echo 0 > test-results.code")
-      finally:
-        machine.copy_from_vm("test-results.log", "")
-        machine.copy_from_vm("test-results.code", "")
-        True
-    '';
-  };
+      if csi-lib-e2e &> test-results.log ; then
+        echo 0 > test-results.code
+      else
+        echo 1 > test-results.code
+      fi
+    ''
+  );
 
-in test-vm
+in test-runner
