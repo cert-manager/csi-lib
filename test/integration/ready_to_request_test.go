@@ -40,6 +40,81 @@ import (
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
+// Tests to ensure that if a certificate is immediately ready to be requested when NodePublishVolume
+// is called, the call will be blocking until the volume is actually ready.
+func Test_PublishCallBlocksIfReadyToRequestDespiteContinueOnNotReadyTrue(t *testing.T) {
+	store := storage.NewMemoryFS()
+	clock := fakeclock.NewFakeClock(time.Now())
+
+	opts, cl, stop := testdriver.Run(t, testdriver.Options{
+		Store:              store,
+		Clock:              clock,
+		ContinueOnNotReady: true,
+		ReadyToRequest:     manager.AlwaysReadyToRequest,
+		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
+			return nil, nil
+		},
+		GenerateRequest: func(meta metadata.Metadata) (*manager.CertificateRequestBundle, error) {
+			return &manager.CertificateRequestBundle{
+				Namespace: "certificaterequest-namespace",
+			}, nil
+		},
+		SignRequest: func(meta metadata.Metadata, key crypto.PrivateKey, request *x509.CertificateRequest) (csr []byte, err error) {
+			return []byte{}, nil
+		},
+		WriteKeypair: func(meta metadata.Metadata, key crypto.PrivateKey, chain []byte, ca []byte) error {
+			store.WriteFiles(meta, map[string][]byte{
+				"ca":   ca,
+				"cert": chain,
+			})
+			nextIssuanceTime := clock.Now().Add(time.Hour)
+			meta.NextIssuanceTime = &nextIssuanceTime
+			return store.WriteMetadata(meta.VolumeID, meta)
+		},
+	})
+	defer stop()
+
+	// Setup a routine to issue/sign the request IF it is created
+	stopCh := make(chan struct{})
+	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
+	defer close(stopCh)
+
+	tmpDir, err := os.MkdirTemp("", "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+	// This call will block until an issuance is successfully completed.
+	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
+		VolumeId: "test-vol",
+		VolumeContext: map[string]string{
+			"csi.storage.k8s.io/ephemeral":     "true",
+			"csi.storage.k8s.io/pod.name":      "the-pod-name",
+			"csi.storage.k8s.io/pod.namespace": "the-pod-namespace",
+		},
+		TargetPath: tmpDir,
+		Readonly:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// We don't wait at all after the NodePublishVolume call, as it should have blocked
+	// above meaning the read should immediately succeed.
+	files, err := store.ReadFiles("test-vol")
+	if err != nil {
+		t.Error(err)
+	}
+	if !reflect.DeepEqual(files["ca"], []byte("ca bytes")) {
+		t.Errorf("unexpected CA data: %v", files["ca"])
+	}
+	if !reflect.DeepEqual(files["cert"], selfSignedExampleCertificate) {
+		t.Errorf("unexpected certificate data: %v", files["cert"])
+	}
+}
+
 func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())

@@ -557,7 +557,7 @@ func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (m
 	}
 
 	// Only attempt issuance immediately if there isn't already an issued certificate
-	if meta.NextIssuanceTime == nil {
+	if meta.NextIssuanceTime == nil || meta.NextIssuanceTime.IsZero() {
 		// If issuance fails, immediately return without retrying so the caller can decide
 		// how to proceed depending on the context this method was called within.
 		if err := m.issue(ctx, volumeID); err != nil {
