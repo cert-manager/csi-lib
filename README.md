@@ -2,11 +2,15 @@
   <img src="https://raw.githubusercontent.com/cert-manager/cert-manager/d53c0b9270f8cd90d908460d69502694e1838f5f/logo/logo-small.png" height="256" width="256" alt="cert-manager project logo" />
 </p>
 
+<p align="center">
+  <a href="https://godoc.org/github.com/cert-manager/csi-lib"><img src="https://godoc.org/github.com/cert-manager/csi-lib?status.svg" alt="cert-manager/csi-lib godoc"></a>
+</p>
+
 # cert-manager-csi-lib
 
-> A library for building [CSI drivers](https://kubernetes-csi.github.io/docs/)
-> that interact with [cert-manager's](https://github.com/cert-manager/cert-manager)
-> CertificateRequest API.
+A library for building [CSI drivers](https://kubernetes-csi.github.io/docs/)
+which interact with [cert-manager's](https://github.com/cert-manager/cert-manager)
+CertificateRequest API.
 
 ## Introduction
 
