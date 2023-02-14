@@ -1,0 +1,66 @@
+{
+  "nodes": {
+    "cert-manager": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1663752623,
+        "narHash": "sha256-8xsROtMw4wpLCt/91tOi+uYLJKB/tOWKRufyc4MsxB8=",
+        "owner": "joshvanl",
+        "repo": "cm-nixpkgs",
+        "rev": "5cbd1c58e79e76a2b1e2de2cebe497c102df7a84",
+        "type": "github"
+      },
+      "original": {
+        "owner": "joshvanl",
+        "repo": "cm-nixpkgs",
+        "type": "github"
+      }
+    },
+    "flake-utils": {
+      "locked": {
+        "lastModified": 1659877975,
+        "narHash": "sha256-zllb8aq3YO3h8B/U0/J1WBgAL8EX5yWf5pMj3G0NAmc=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "c0e246b9b83f637f4681389ecabcb2681b4f3af0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1663752925,
+        "narHash": "sha256-yIlReA0w74YyKnOWFNooI+wlTytYr6YQKg6N95v5puw=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "19aa0eb4dec3c60436387771057de998298b3cd6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "cert-manager": "cert-manager",
+        "flake-utils": "flake-utils",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
