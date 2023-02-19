@@ -43,10 +43,10 @@ import (
 // defined on the CSIDriver manifest definition, along with setting
 // requiresRepublish to true:
 //
-// tokenRequests:
-//   - audience: ""
-//     expirationSeconds: 3600
-// requiresRepublish: true
+//	tokenRequests:
+//	- audience: ""
+//	  expirationSeconds: 3600
+//	requiresRepublish: true
 //
 // restConfig must contain the Kubernetes API server Host, and a valid
 // TLSClientConfig.
