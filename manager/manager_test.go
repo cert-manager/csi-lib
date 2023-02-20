@@ -331,7 +331,8 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
 			log := testr.New(t)
 
 			opts := newDefaultTestOptions(t)
@@ -347,6 +348,17 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 				if _, err := m.client.CertmanagerV1().CertificateRequests(req.Namespace).Create(ctx, req, metav1.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}
+			}
+
+			// make sure client cache is in sync
+			if err := wait.PollUntilWithContext(ctx, 5*time.Millisecond, func(context.Context) (done bool, err error) {
+				list, err := m.client.CertmanagerV1().CertificateRequests(defaultTestNamespace).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					return false, err
+				}
+				return len(list.Items) == len(test.objects), nil // poll until all objects are cached
+			}); err != nil {
+				t.Fatal(err)
 			}
 
 			if err := m.cleanupStaleRequests(ctx, log, "volumeID-1"); (err != nil) != test.wantErr {
