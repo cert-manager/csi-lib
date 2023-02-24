@@ -87,6 +87,11 @@ type Options struct {
 
 	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
 	RenewalBackoffConfig *wait.Backoff
+	// IssueRenewalTimeout defines timeout value for each issue() call in renewal process
+	IssueRenewalTimeout time.Duration
+	// IssuePollInterval defines an interval time for each subroutine call (check CSR status) within issue() function
+	// Note, the issuePollInterval should be less than renewalIssueTimeout
+	IssuePollInterval time.Duration
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -148,6 +153,12 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.MaxRequestsPerVolume < 0 {
 		return nil, errors.New("MaxRequestsPerVolume cannot be less than zero")
 	}
+	if opts.IssueRenewalTimeout == 0 {
+		opts.IssueRenewalTimeout = 10 * time.Second
+	}
+	if opts.IssuePollInterval == 0 {
+		opts.IssuePollInterval = time.Second
+	}
 	if len(opts.NodeID) == 0 {
 		return nil, errors.New("NodeID must be set")
 	}
@@ -189,6 +200,8 @@ func NewManager(opts Options) (*Manager, error) {
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
+		issueRenewalTimeout:  opts.IssueRenewalTimeout,
+		issuePollInterval:    opts.IssuePollInterval,
 		requestNameGenerator: func() string {
 			return string(uuid.NewUUID())
 		},
@@ -291,6 +304,12 @@ type Manager struct {
 	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
 	backoffConfig wait.Backoff
 
+	// issueRenewalTimeout defines timeout value for each issue() call in renewal process
+	issueRenewalTimeout time.Duration
+	// issuePollInterval defines an interval time for each subroutine call (check CSR status) within issue() function
+	// Note, the issuePollInterval should be less than renewalIssueTimeout
+	issuePollInterval time.Duration
+
 	// requestNameGenerator generates a new random name for a certificaterequest object
 	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
 	requestNameGenerator func() string
@@ -341,7 +360,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 
 	// Poll every 1s for the CertificateRequest to be ready
 	lastFailureReason := ""
-	if err := wait.PollUntilWithContext(ctx, time.Second, func(ctx context.Context) (done bool, err error) {
+	if err := wait.PollUntilWithContext(ctx, m.issuePollInterval, func(ctx context.Context) (done bool, err error) {
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			// A NotFound error implies something deleted the resource - fail
@@ -634,7 +653,9 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
 					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func(ctx context.Context) (bool, error) {
 						log.Info("Triggering new issuance")
-						if err := m.issue(ctx, volumeID); err != nil {
+						issueCtx, issueCancel := context.WithTimeout(ctx, m.issueRenewalTimeout)
+						defer issueCancel()
+						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							return false, nil
 						}

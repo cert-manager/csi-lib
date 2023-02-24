@@ -285,6 +285,72 @@ func TestManager_ManageVolume_beginsManagingAndProceedsIfNotReady(t *testing.T) 
 	}
 }
 
+func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T) {
+	expBackOffDuration := 100 * time.Millisecond
+	expBackOffCap := 5 * expBackOffDuration
+	expBackOffFactor := 2.0 // We multiply the 'duration' by 2.0 if the attempt fails/errors
+	expBackOffJitter := 0.0 // No jitter to the 'duration', so we could calculate number of retries easily
+	expBackOffSteps := 100  // The maximum number of backoff attempts
+	issueRenewalTimeout := expBackOffDuration
+	issuePollInterval := issueRenewalTimeout / 10
+
+	// Expected number of retries in each expBackOff cycle :=
+	// 				⌈log base expBackOffFactor of (expBackOffCap/expBackOffDuration)⌉
+	expectNumOfRetries := 3 // ⌈log2(500/100)⌉
+
+	// Because in startRenewalRoutine, ticker := time.NewTicker(time.Second)
+	// 2 seconds should complete an expBackOff cycle
+	// ticker start time (1s) + expBackOffCap (0.5s) + expectNumOfRetries (3) * issueRenewalTimeout (0.1)
+	expectGlobalTimeout := 2 * time.Second
+
+	actualNumOfRetries := 0 // init
+
+	opts := newDefaultTestOptions(t)
+	opts.RenewalBackoffConfig = &wait.Backoff{
+		Duration: expBackOffDuration,
+		Cap:      expBackOffCap,
+		Factor:   expBackOffFactor,
+		Jitter:   expBackOffJitter,
+		Steps:    expBackOffSteps,
+	}
+	opts.IssueRenewalTimeout = issueRenewalTimeout
+	opts.IssuePollInterval = issuePollInterval
+	opts.ReadyToRequest = func(meta metadata.Metadata) (bool, string) {
+		// ReadyToRequest will be called by issue()
+		actualNumOfRetries++
+		return true, "" // AlwaysReadyToRequest
+	}
+	m, err := NewManager(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Register a new volume with the metadata store
+	store := opts.MetadataReader.(storage.Interface)
+	meta := metadata.Metadata{
+		VolumeID:   "vol-id",
+		TargetPath: "/fake/path",
+	}
+	store.RegisterMetadata(meta)
+	// Ensure we stop managing the volume after the test
+	defer func() {
+		store.RemoveVolume(meta.VolumeID)
+		m.UnmanageVolume(meta.VolumeID)
+	}()
+
+	// Put the certificate under management
+	managed := m.ManageVolume(meta.VolumeID)
+	if !managed {
+		t.Errorf("expected management to have started, but it did not")
+	}
+
+	time.Sleep(expectGlobalTimeout)
+
+	if actualNumOfRetries != expectNumOfRetries {
+		t.Errorf("expect %d of retires, but got %d", expectNumOfRetries, actualNumOfRetries)
+	}
+}
+
 func TestManager_cleanupStaleRequests(t *testing.T) {
 	type fields struct {
 		nodeID               string
