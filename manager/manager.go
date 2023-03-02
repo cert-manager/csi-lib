@@ -835,10 +835,10 @@ func isX509CertificateRequestSemanticEqual(cr1, cr2 *x509.CertificateRequest) bo
 		return false
 	}
 
+	// Note, Subject.Names[] contains all "parsed" attributes from Subject's fields.
+	// If cr1 is a signed version of cr2, reflect.DeepEqual(cr1.Subject, cr2.Subject) could be false.
 	return cr1.Version == cr2.Version &&
-		cr1.SignatureAlgorithm == cr2.SignatureAlgorithm &&
-		cr1.PublicKeyAlgorithm == cr2.PublicKeyAlgorithm &&
-		reflect.DeepEqual(cr1.Subject, cr2.Subject) &&
+		cr1.Subject.String() == cr2.Subject.String() &&
 		reflect.DeepEqual(cr1.Extensions, cr2.Extensions) &&
 		reflect.DeepEqual(cr1.ExtraExtensions, cr2.ExtraExtensions) &&
 		reflect.DeepEqual(cr1.DNSNames, cr2.DNSNames) &&

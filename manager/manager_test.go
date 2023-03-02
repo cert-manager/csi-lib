@@ -2,17 +2,21 @@ package manager
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/cert-manager/cert-manager/pkg/util/pki"
 	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -425,6 +429,109 @@ func Test_calculateNextIssuanceTime(t *testing.T) {
 			assert.Equal(t, test.expErr, err != nil)
 			assert.Equal(t, test.expTime, renewTime)
 		})
+	}
+}
+
+func TestManager_issue_reuseLastPendingRequest(t *testing.T) {
+	// ----- Setup -----
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	opts := newDefaultTestOptions(t)
+	opts.GeneratePrivateKey = func(meta metadata.Metadata) (crypto.PrivateKey, error) {
+		return pki.GenerateECPrivateKey(256) // generate an EC-P-256 private key
+	}
+	opts.GenerateRequest = func(meta metadata.Metadata) (*CertificateRequestBundle, error) {
+		// generate a CSR bundle in defaultTestNamespace, and its CN is specified in meta.VolumeContext["CN"] field
+		return &CertificateRequestBundle{
+			Namespace: defaultTestNamespace,
+			Request: &x509.CertificateRequest{
+				Subject: pkix.Name{
+					CommonName: meta.VolumeContext["CN"],
+				},
+			},
+		}, nil
+	}
+	opts.SignRequest = func(meta metadata.Metadata, key crypto.PrivateKey, request *x509.CertificateRequest) ([]byte, error) {
+		// sign the request with given private key, ignore the metadata
+		csrDer, err := x509.CreateCertificateRequest(rand.Reader, request, key)
+		if err != nil {
+			return nil, err
+		}
+		return pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE REQUEST",
+			Bytes: csrDer,
+		}), nil
+	}
+
+	m, err := NewManager(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
+
+	// Register a new volume with the metadata store
+	store := opts.MetadataReader.(storage.Interface)
+	meta := metadata.Metadata{
+		VolumeID:   "vol-id",
+		TargetPath: "/fake/path",
+		VolumeContext: map[string]string{
+			"CN": "test-cn-1",
+		},
+	}
+	store.RegisterMetadata(meta)
+	// Ensure we stop managing the volume after the test
+	defer func() {
+		store.RemoveVolume(meta.VolumeID)
+		m.UnmanageVolume(meta.VolumeID)
+	}()
+
+	// ----- Test -----
+	// Step 1: initial issuance should be timeout as we don't have an issuer
+	err = m.issue(ctx, meta.VolumeID)
+	if err == nil {
+		t.Errorf("expect error from timeout, but got <nil> error")
+	}
+	reqList1, err := m.client.CertmanagerV1().CertificateRequests(defaultTestNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqList1.Items) != 1 {
+		t.Errorf("expect 1 pending request, but got %d", len(reqList1.Items))
+	}
+
+	// Step 2: retry issuance should reuse the pending certificate
+	err = m.issue(ctx, meta.VolumeID)
+	if err == nil {
+		t.Errorf("expect error from timeout, but got <nil> error")
+	}
+	reqList2, err := m.client.CertmanagerV1().CertificateRequests(defaultTestNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqList2.Items) != 1 {
+		t.Errorf("expect 1 pending request, but got %d", len(reqList2.Items))
+	}
+	if !reflect.DeepEqual(reqList1.Items[0], reqList2.Items[0]) {
+		t.Errorf("expect reuse pending rquest, but got a different one")
+	}
+
+	// Step 3: retry issuance with a different setting should create a new pending certificate
+	meta.VolumeContext["CN"] = "test-cn-2"
+	store.WriteMetadata(meta.VolumeID, meta)
+	err = m.issue(ctx, meta.VolumeID)
+	if err == nil {
+		t.Errorf("expect error from timeout, but got <nil> error")
+	}
+	reqList3, err := m.client.CertmanagerV1().CertificateRequests(defaultTestNamespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reqList3.Items) != 1 {
+		t.Errorf("expect 1 pending request, but got %d", len(reqList3.Items))
+	}
+	if reflect.DeepEqual(reqList2.Items[0], reqList3.Items[0]) {
+		t.Errorf("expect creating a new pending rquest, but got the same one")
 	}
 }
 
