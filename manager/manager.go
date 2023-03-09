@@ -95,7 +95,7 @@ type Options struct {
 // resume managing them if any already exist.
 func NewManager(opts Options) (*Manager, error) {
 	if opts.Client == nil {
-		return nil, errors.New("Client must be set")
+		return nil, errors.New("client must be set")
 	}
 	if opts.ClientForMetadata == nil {
 		opts.ClientForMetadata = func(_ metadata.Metadata) (cmclient.Interface, error) {
@@ -122,7 +122,7 @@ func NewManager(opts Options) (*Manager, error) {
 		}
 	}
 	if opts.Log == nil {
-		return nil, errors.New("Log must be set")
+		return nil, errors.New("log must be set")
 	}
 	if opts.MetadataReader == nil {
 		return nil, errors.New("MetadataReader must be set")
