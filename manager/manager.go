@@ -95,7 +95,7 @@ type Options struct {
 // resume managing them if any already exist.
 func NewManager(opts Options) (*Manager, error) {
 	if opts.Client == nil {
-		return nil, errors.New("Client must be set")
+		return nil, errors.New("client must be set")
 	}
 	if opts.ClientForMetadata == nil {
 		opts.ClientForMetadata = func(_ metadata.Metadata) (cmclient.Interface, error) {
@@ -122,7 +122,7 @@ func NewManager(opts Options) (*Manager, error) {
 		}
 	}
 	if opts.Log == nil {
-		return nil, errors.New("Log must be set")
+		return nil, errors.New("log must be set")
 	}
 	if opts.MetadataReader == nil {
 		return nil, errors.New("MetadataReader must be set")
@@ -413,16 +413,13 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		return fmt.Errorf("waiting for request: %w", err)
 	}
 
-	// Default the renewal time to be 2/3rds through the certificate's duration.
+	// Calculate the default next issuance time.
 	// The implementation's writeKeypair function may override this value before
 	// writing to the storage layer.
-	block, _ := pem.Decode(req.Status.Certificate)
-	crt, err := x509.ParseCertificate(block.Bytes)
+	renewalPoint, err := calculateNextIssuanceTime(req.Status.Certificate)
 	if err != nil {
-		return fmt.Errorf("parsing issued certificate: %w", err)
+		return fmt.Errorf("calculating next issuance time: %w", err)
 	}
-	duration := crt.NotAfter.Sub(crt.NotBefore)
-	renewalPoint := crt.NotBefore.Add(duration * (2 / 3))
 	meta.NextIssuanceTime = &renewalPoint
 
 	if err := m.writeKeypair(meta, key, req.Status.Certificate, req.Status.CA); err != nil {
@@ -721,4 +718,21 @@ func (m *Manager) Stop() {
 		close(stopCh)
 		delete(m.managedVolumes, k)
 	}
+}
+
+// calculateNextIssuanceTime will return the default time at which the certificate
+// should be renewed by the driver- 2/3rds through its lifetime (NotAfter -
+// NotBefore).
+func calculateNextIssuanceTime(chain []byte) (time.Time, error) {
+	block, _ := pem.Decode(chain)
+	crt, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
+	}
+
+	actualDuration := crt.NotAfter.Sub(crt.NotBefore)
+
+	renewBeforeNotAfter := actualDuration / 3
+
+	return crt.NotAfter.Add(-renewBeforeNotAfter), nil
 }
