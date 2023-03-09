@@ -2,13 +2,20 @@ package manager
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"testing"
 	"time"
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	"github.com/go-logr/logr/testr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -379,6 +386,44 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 					t.Errorf("expected %q to exist but it does not", req.Name)
 				}
 			}
+		})
+	}
+}
+
+func Test_calculateNextIssuanceTime(t *testing.T) {
+	notBefore := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC)
+	notAfter := time.Date(1970, time.January, 4, 0, 0, 0, 0, time.UTC)
+	pk, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber:          new(big.Int).Lsh(big.NewInt(1), 128),
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &pk.PublicKey, pk)
+	require.NoError(t, err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	tests := map[string]struct {
+		expTime time.Time
+		expErr  bool
+	}{
+		"if no attributes given, return 2/3rd certificate lifetime": {
+			expTime: notBefore.AddDate(0, 0, 2),
+			expErr:  false,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			renewTime, err := calculateNextIssuanceTime(certPEM)
+			assert.Equal(t, test.expErr, err != nil)
+			assert.Equal(t, test.expTime, renewTime)
 		})
 	}
 }
