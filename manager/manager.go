@@ -632,7 +632,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 					// Instead, retry within the same iteration of the for loop and apply an exponential backoff.
 					// Because we pass ctx through to the 'wait' package, if the stopCh is closed/context is cancelled,
 					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
-					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func() (bool, error) {
+					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func(ctx context.Context) (bool, error) {
 						log.Info("Triggering new issuance")
 						if err := m.issue(ctx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
