@@ -3,6 +3,8 @@ package manager
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -16,7 +18,6 @@ import (
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
-	"github.com/cert-manager/cert-manager/pkg/util/pki"
 	"github.com/go-logr/logr/testr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -439,7 +440,7 @@ func TestManager_issue_reuseLastPendingRequest(t *testing.T) {
 
 	opts := newDefaultTestOptions(t)
 	opts.GeneratePrivateKey = func(meta metadata.Metadata) (crypto.PrivateKey, error) {
-		return pki.GenerateECPrivateKey(256) // generate an EC-P-256 private key
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader) // generate an EC-P-256 private key
 	}
 	opts.GenerateRequest = func(meta metadata.Metadata) (*CertificateRequestBundle, error) {
 		// generate a CSR bundle in defaultTestNamespace, and its CN is specified in meta.VolumeContext["CN"] field

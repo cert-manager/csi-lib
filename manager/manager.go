@@ -318,7 +318,7 @@ type Manager struct {
 //
 //  4. Polling certificate request's status every second:
 //     - if not in a terminal state, keep polling until timeout (error out)
-//     - if not found / invalid / failed, delete it from cache --> error out
+//     - if invalid / failed, delete it from cache --> error out
 //     - if ready, delete it from cache
 //
 //  5. Write cert files to volume
@@ -344,33 +344,13 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 
 	var req *cmapi.CertificateRequest
 	var key crypto.PrivateKey
-	// If there is a pending request matches the csrBundle, then we don't need to generate a new one.
-	// If encounter any error, remove the request from cache, and we will generate a new request in next step.
-	if reqItem, exist := m.getPendingRequestItemForVolume(volumeID); exist {
-		if pendingRequest, err := m.lister.CertificateRequests(reqItem.Namespace).Get(reqItem.Name); err != nil {
-			log.Error(err, "Failed fetch pending CertificateRequest")
-			m.deletePendingRequestItemForVolume(volumeID)
-		} else {
-			x509Request, err := pki.DecodeX509CertificateRequestBytes(pendingRequest.Spec.Request)
-			if err != nil {
-				log.Error(err, "Failed decode pending CertificateRequest")
-				m.deletePendingRequestItemForVolume(volumeID)
-			}
-			if isX509CertificateRequestSemanticEqual(x509Request, csrBundle.Request) {
-				// if this pending request's parameters match the csrBundle's request, reuse it
-				if err := privateKeyMatchesCSR(reqItem.Key, x509Request); err != nil {
-					log.Error(err, "Cached private key does not match CSR")
-					m.deletePendingRequestItemForVolume(volumeID)
-				} else {
-					req, key = pendingRequest, reqItem.Key
-					log.V(2).Info("Retry pending request",
-						"namespace", reqItem.Namespace, "name", reqItem.Name)
-				}
-			}
-		}
+	req, key, err = m.getPendingRequestAndKeyForVolumeID(volumeID, csrBundle)
+	if err != nil {
+		return fmt.Errorf("get pending request and key: %w", err)
 	}
+
 	// Generate new certificate request if there is no matching request in cache
-	if req == nil {
+	if req == nil || key == nil {
 		if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 			return fmt.Errorf("cleaning up stale requests: %w", err)
 		}
@@ -407,7 +387,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		if apierrors.IsNotFound(err) {
 			// A NotFound error implies something deleted the resource - fail
 			// early to allow a retry to occur at a later time if needed.
-			m.deletePendingRequestItemForVolume(volumeID)
+			// Do not delete it from cache as the lister might not have it in its cache yet.
 			return false, err
 		}
 		if err != nil {
@@ -492,6 +472,41 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log.V(2).Info("Wrote new keypair to storage")
 
 	return nil
+}
+
+// getPendingRequestAndKeyForVolumeID checks if there is a pending request matches the csrBundle and cached privateKey.
+// - Return the pending request and associated private key if found a match.
+// - If encounter any error, remove the request from cache, and returns the error.
+func (m *Manager) getPendingRequestAndKeyForVolumeID(volumeID string, csrBundle *CertificateRequestBundle) (*cmapi.CertificateRequest, crypto.PrivateKey, error) {
+	reqItem, exist := m.getPendingRequestItemForVolume(volumeID)
+	if !exist {
+		return nil, nil, nil
+	}
+
+	pendingRequest, err := m.lister.CertificateRequests(reqItem.Namespace).Get(reqItem.Name)
+	if err != nil {
+		m.deletePendingRequestItemForVolume(volumeID)
+		return nil, nil, fmt.Errorf("failed fetch pending CertificateRequest: %w", err)
+	}
+
+	x509Request, err := pki.DecodeX509CertificateRequestBytes(pendingRequest.Spec.Request)
+	if err != nil {
+		m.deletePendingRequestItemForVolume(volumeID)
+		return nil, nil, fmt.Errorf("failed decode pending CertificateRequest: %w", err)
+	}
+
+	match, err := pendingRequestMatchesCSRBundleAndKey(x509Request, csrBundle, reqItem.Key)
+	if err != nil {
+		m.deletePendingRequestItemForVolume(volumeID)
+		return nil, nil, fmt.Errorf("failed match pending CertificateRequest: %w", err)
+	}
+	if !match {
+		m.deletePendingRequestItemForVolume(volumeID)
+		return nil, nil, nil
+	}
+
+	// if this pending request's parameters match the csrBundle's request, reuse it
+	return pendingRequest, reqItem.Key, nil
 }
 
 func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, volumeID string) error {
@@ -826,41 +841,47 @@ func (m *Manager) deletePendingRequestItemForVolume(volumeID string) {
 	delete(m.pendingRequests, volumeID)
 }
 
-// isX509CertificateRequestSemanticEqual returns true only if two given x509.CertificateRequests have the same
-// parameters, regardless of PublicKey and Signature parts.
-func isX509CertificateRequestSemanticEqual(cr1, cr2 *x509.CertificateRequest) bool {
-	if cr1 == nil && cr2 == nil {
-		return true
-	} else if cr1 == nil || cr2 == nil {
-		return false
+// pendingRequestMatchesCSRBundleAndKey returns true only if pendingRequest have the same
+// parameters (regardless of PublicKey and Signature parts) of csrBundle.Request, and the
+// pendingRequest's publicKey matches given privateKey.
+func pendingRequestMatchesCSRBundleAndKey(pendingRequest *x509.CertificateRequest, csrBundle *CertificateRequestBundle, key crypto.PrivateKey) (bool, error) {
+	newRequest := csrBundle.Request
+
+	// safe check
+	if pendingRequest == nil && newRequest == nil {
+		return true, nil
+	}
+	if pendingRequest == nil || newRequest == nil {
+		return false, nil
 	}
 
 	// Note, Subject.Names[] contains all "parsed" attributes from Subject's fields.
-	// If cr1 is a signed version of cr2, reflect.DeepEqual(cr1.Subject, cr2.Subject) could be false.
-	return cr1.Version == cr2.Version &&
-		cr1.Subject.String() == cr2.Subject.String() &&
-		reflect.DeepEqual(cr1.Extensions, cr2.Extensions) &&
-		reflect.DeepEqual(cr1.ExtraExtensions, cr2.ExtraExtensions) &&
-		reflect.DeepEqual(cr1.DNSNames, cr2.DNSNames) &&
-		reflect.DeepEqual(cr1.EmailAddresses, cr2.EmailAddresses) &&
-		reflect.DeepEqual(cr1.IPAddresses, cr2.IPAddresses) &&
-		reflect.DeepEqual(cr1.URIs, cr2.URIs)
-}
+	// If pendingRequest is a signed version of newRequest, reflect.DeepEqual(pendingRequest.Subject, newRequest.Subject) could be false.
+	if pendingRequest.Version != newRequest.Version ||
+		pendingRequest.Subject.String() != newRequest.Subject.String() ||
+		!reflect.DeepEqual(pendingRequest.Extensions, newRequest.Extensions) ||
+		!reflect.DeepEqual(pendingRequest.ExtraExtensions, newRequest.ExtraExtensions) ||
+		!reflect.DeepEqual(pendingRequest.DNSNames, newRequest.DNSNames) ||
+		!reflect.DeepEqual(pendingRequest.EmailAddresses, newRequest.EmailAddresses) ||
+		!reflect.DeepEqual(pendingRequest.IPAddresses, newRequest.IPAddresses) ||
+		!reflect.DeepEqual(pendingRequest.URIs, newRequest.URIs) {
 
-func privateKeyMatchesCSR(privateKey crypto.PrivateKey, csr *x509.CertificateRequest) error {
-	// extract the public component of the key
-	publicKey, err := pki.PublicKeyForPrivateKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to get public key from private key: %w", err)
+		return false, nil
 	}
 
-	ok, err := pki.PublicKeysEqual(publicKey, csr.PublicKey)
+	// extract the public component of the key
+	publicKey, err := pki.PublicKeyForPrivateKey(key)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("failed to get public key from private key object: %w", err)
+	}
+
+	ok, err := pki.PublicKeysEqual(publicKey, pendingRequest.PublicKey)
+	if err != nil {
+		return false, err
 	}
 	if !ok {
-		return fmt.Errorf("CSR not signed by referenced private key")
+		return false, nil // CSR is not signed by referenced private key
 	}
-	return nil
 
+	return true, nil
 }
