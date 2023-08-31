@@ -18,6 +18,7 @@ package manager
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -40,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/clock"
 
 	internalapi "github.com/cert-manager/csi-lib/internal/api"
@@ -157,6 +159,9 @@ func NewManager(opts Options) (*Manager, error) {
 		return nil, fmt.Errorf("building node name label selector: %w", err)
 	}
 
+	// construct the requestToPrivateKeyMap so we can use event handlers below to manage it
+	var requestToPrivateKeyLock sync.Mutex
+	requestToPrivateKeyMap := make(map[types.UID]crypto.PrivateKey)
 	// Create an informer factory
 	informerFactory := cminformers.NewSharedInformerFactoryWithOptions(opts.Client, 0, cminformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
 		opts.LabelSelector = labels.NewSelector().Add(*nodeNameReq).String()
@@ -164,18 +169,75 @@ func NewManager(opts Options) (*Manager, error) {
 	// Fetch the lister before calling Start() to ensure this informer is
 	// registered with the factory
 	lister := informerFactory.Certmanager().V1().CertificateRequests().Lister()
+	informerFactory.Certmanager().V1().CertificateRequests().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		DeleteFunc: func(obj interface{}) {
+			key, ok := obj.(string)
+			if !ok {
+				return
+			}
+			namespace, name, err := cache.SplitMetaNamespaceKey(key)
+			if err != nil {
+				return
+			}
+			req, err := lister.CertificateRequests(namespace).Get(name)
+			if err != nil {
+				// we no longer have a copy of this request, so we can't work out its UID.
+				// instead the associated pending request entry for this request will be cleaned up by the periodic 'janitor' task.
+				return
+			}
+
+			requestToPrivateKeyLock.Lock()
+			defer requestToPrivateKeyLock.Unlock()
+			if _, ok := requestToPrivateKeyMap[req.UID]; ok {
+				delete(requestToPrivateKeyMap, req.UID)
+			}
+		},
+	})
+
+	// create a stop channel that manages all sub goroutines
 	stopCh := make(chan struct{})
+	// begin a background routine which periodically checks to ensure all members of the pending request map actually
+	// have corresponding CertificateRequest objects in the apiserver.
+	// This avoids leaking memory if we don't observe a request being deleted, or we observe it after the lister has purged
+	// the request data from its cache.
+	// this routine must be careful to not delete entries from this map that have JUST been added to the map, but haven't
+	// been observed by the lister yet (else it may purge data we want to keep, causing a whole new request cycle).
+	// for now, to avoid this case, we only run the routine every 5 minutes. It would be better if we recorded the time we
+	// added the entry to the map instead, and only purged items from the map that are older that N duration (TBD).
+	janitorLogger := opts.Log.WithName("pending_request_janitor")
+	go wait.Until(func() {
+		reqs, err := lister.List(labels.Everything())
+		if err != nil {
+			janitorLogger.Error(err, "failed listing existing requests")
+		}
+
+		existsMap := make(map[types.UID]struct{})
+		for _, req := range reqs {
+			existsMap[req.UID] = struct{}{}
+		}
+
+		requestToPrivateKeyLock.Lock()
+		defer requestToPrivateKeyLock.Unlock()
+		for uid := range requestToPrivateKeyMap {
+			if _, ok := existsMap[uid]; !ok {
+				// purge the item from the map as it does not exist in the apiserver
+				delete(requestToPrivateKeyMap, uid)
+			}
+		}
+	}, time.Minute*5, stopCh)
 	// Begin watching the API
 	informerFactory.Start(stopCh)
 	informerFactory.WaitForCacheSync(stopCh)
 
 	m := &Manager{
-		client:            opts.Client,
-		clientForMetadata: opts.ClientForMetadata,
-		lister:            lister,
-		metadataReader:    opts.MetadataReader,
-		clock:             opts.Clock,
-		log:               *opts.Log,
+		client:                  opts.Client,
+		clientForMetadata:       opts.ClientForMetadata,
+		lister:                  lister,
+		requestToPrivateKeyLock: &requestToPrivateKeyLock,
+		requestToPrivateKeyMap:  requestToPrivateKeyMap,
+		metadataReader:          opts.MetadataReader,
+		clock:                   opts.Clock,
+		log:                     *opts.Log,
 
 		generatePrivateKey: opts.GeneratePrivateKey,
 		generateRequest:    opts.GenerateRequest,
@@ -260,6 +322,10 @@ type Manager struct {
 	// lister is used as a read-only cache of CertificateRequest resources
 	lister cmlisters.CertificateRequestLister
 
+	// A map that associates a CertificateRequest's UID with its private key.
+	requestToPrivateKeyLock *sync.Mutex
+	requestToPrivateKeyMap  map[types.UID]crypto.PrivateKey
+
 	// used to read metadata from the store
 	metadataReader storage.MetadataReader
 
@@ -315,10 +381,32 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	}
 	log.V(2).Info("Read metadata", "metadata", meta)
 
+	// check if there is already a pending request in-flight for this volume.
+	// if there is, and we still have a copy of its private key in memory, we can resume the existing request and
+	// avoid creating additional CertificateRequest objects.
+	existingReq, err := m.findPendingRequest(meta)
+	if err != nil {
+		return fmt.Errorf("failed when checking if an existing request exists: %w", err)
+	}
+	// if there is an existing in-flight request, attempt to 'resume' it (i.e. re-check to see if it is ready)
+	if existingReq != nil {
+		// we can only resume a request if we still have a reference to its private key, so look that up in our pending
+		// requests map
+		if key, ok := m.readPendingRequestPrivateKey(existingReq.UID); ok {
+			log.V(4).Info("Re-using existing certificaterequest")
+			return m.handleRequest(ctx, volumeID, meta, key, existingReq)
+		}
+
+		// if we don't have a copy of the associated private key, delete the currently in-flight request
+		log.V(2).Info("Found existing request that we don't have corresponding private key for - restarting request process")
+		if err := m.client.CertmanagerV1().CertificateRequests(existingReq.Namespace).Delete(ctx, existingReq.Name, metav1.DeleteOptions{}); err != nil {
+			return fmt.Errorf("failed to delete existing in-flight request: %w", err)
+		}
+	}
+
 	if ready, reason := m.readyToRequest(meta); !ready {
 		return fmt.Errorf("driver is not ready to request a certificate for this volume: %v", reason)
 	}
-
 	key, err := m.generatePrivateKey(meta)
 	if err != nil {
 		return fmt.Errorf("generating private key: %w", err)
@@ -342,6 +430,71 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 		return fmt.Errorf("submitting request: %w", err)
 	}
 	log.Info("Created new CertificateRequest resource")
+
+	// persist the reference to the private key in memory so we can resume this request in future if it doesn't complete
+	// the first time.
+	m.writePendingRequestPrivateKey(req.UID, key)
+	return m.handleRequest(ctx, volumeID, meta, key, req)
+}
+
+func (m *Manager) readPendingRequestPrivateKey(uid types.UID) (crypto.PrivateKey, bool) {
+	m.requestToPrivateKeyLock.Lock()
+	defer m.requestToPrivateKeyLock.Unlock()
+	key, ok := m.requestToPrivateKeyMap[uid]
+	return key, ok
+}
+
+func (m *Manager) writePendingRequestPrivateKey(uid types.UID, key crypto.PrivateKey) {
+	m.requestToPrivateKeyLock.Lock()
+	defer m.requestToPrivateKeyLock.Unlock()
+	m.requestToPrivateKeyMap[uid] = key
+}
+
+func (m *Manager) deletePendingRequestPrivateKey(uid types.UID) {
+	m.requestToPrivateKeyLock.Lock()
+	defer m.requestToPrivateKeyLock.Unlock()
+	delete(m.requestToPrivateKeyMap, uid)
+}
+
+func (m *Manager) findPendingRequest(meta metadata.Metadata) (*cmapi.CertificateRequest, error) {
+	reqs, err := m.listAllRequestsForVolume(meta.VolumeID)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(reqs) == 0 {
+		return nil, nil
+	}
+
+	// only consider the newest request - we will never resume an older request
+	req := reqs[0]
+	if !certificateRequestCanBeResumed(req) {
+		return nil, nil
+	}
+
+	// TODO: check if this request is still actually valid for the input metadata
+	return req, nil
+}
+
+func certificateRequestCanBeResumed(req *cmapi.CertificateRequest) bool {
+	for _, cond := range req.Status.Conditions {
+		if cond.Type == cmapi.CertificateRequestConditionReady {
+			switch cond.Reason {
+			case cmapi.CertificateRequestReasonPending, cmapi.CertificateRequestReasonIssued, "":
+				// either explicit Pending, Issued or empty is considered re-sumable
+				return true
+			default:
+				// any other state is a terminal failed state and means the request has failed
+				return false
+			}
+		}
+	}
+	// if there is no Ready condition, the request is still pending processing
+	return true
+}
+
+func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metadata.Metadata, key crypto.PrivateKey, req *cmapi.CertificateRequest) error {
+	log := m.log.WithValues("volume_id", volumeID)
 
 	// Poll every 1s for the CertificateRequest to be ready
 	lastFailureReason := ""
@@ -431,28 +584,45 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	}
 	log.V(2).Info("Wrote new keypair to storage")
 
+	// We must explicitly delete the private key from the pending requests map so that the existing Completed
+	// request will not be re-used upon renewal.
+	// Without this, the renewal would pick up the existing issued certificate and re-issue, rather than requesting
+	// a new certificate.
+	m.deletePendingRequestPrivateKey(req.UID)
+
 	return nil
 }
 
-func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, volumeID string) error {
+// returns a list of all pending certificaterequest objects for the given volumeID.
+// the returned slice will be ordered with the most recent request FIRST.
+func (m *Manager) listAllRequestsForVolume(volumeID string) ([]*cmapi.CertificateRequest, error) {
 	sel, err := m.labelSelectorForVolume(volumeID)
 	if err != nil {
-		return fmt.Errorf("internal error building label selector - this is a bug, please open an issue: %w", err)
+		return nil, fmt.Errorf("internal error building label selector - this is a bug, please open an issue: %w", err)
 	}
 
 	reqs, err := m.lister.List(sel)
 	if err != nil {
-		return fmt.Errorf("listing certificaterequests: %w", err)
-	}
-
-	if len(reqs) < m.maxRequestsPerVolume {
-		return nil
+		return nil, fmt.Errorf("listing certificaterequests: %w", err)
 	}
 
 	// sort newest first to oldest last
 	sort.Slice(reqs, func(i, j int) bool {
 		return reqs[i].CreationTimestamp.After(reqs[j].CreationTimestamp.Time)
 	})
+
+	return reqs, nil
+}
+
+func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, volumeID string) error {
+	reqs, err := m.listAllRequestsForVolume(volumeID)
+	if err != nil {
+		return err
+	}
+
+	if len(reqs) < m.maxRequestsPerVolume {
+		return nil
+	}
 
 	// start at the end of the slice and work back to maxRequestsPerVolume
 	for i := len(reqs) - 1; i >= m.maxRequestsPerVolume-1; i-- {
