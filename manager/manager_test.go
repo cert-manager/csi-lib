@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -296,14 +297,14 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 
 	// Expected number of retries in each expBackOff cycle :=
 	// 				⌈log base expBackOffFactor of (expBackOffCap/expBackOffDuration)⌉
-	expectNumOfRetries := 3 // ⌈log2(500/100)⌉
+	var expectNumOfRetries int32 = 3 // ⌈log2(500/100)⌉
 
 	// Because in startRenewalRoutine, ticker := time.NewTicker(time.Second)
 	// 2 seconds should complete an expBackOff cycle
 	// ticker start time (1s) + expBackOffCap (0.5s) + expectNumOfRetries (3) * issueRenewalTimeout (0.1)
 	expectGlobalTimeout := 2 * time.Second
 
-	actualNumOfRetries := 0 // init
+	var numOfRetries int32 = 0 // init
 
 	opts := newDefaultTestOptions(t)
 	opts.RenewalBackoffConfig = &wait.Backoff{
@@ -317,8 +318,8 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 	opts.IssuePollInterval = issuePollInterval
 	opts.ReadyToRequest = func(meta metadata.Metadata) (bool, string) {
 		// ReadyToRequest will be called by issue()
-		actualNumOfRetries++
-		return true, "" // AlwaysReadyToRequest
+		atomic.AddInt32(&numOfRetries, 1) // run in a goroutine, thus increment it atomically
+		return true, ""                   // AlwaysReadyToRequest
 	}
 	m, err := NewManager(opts)
 	if err != nil {
@@ -346,6 +347,7 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 
 	time.Sleep(expectGlobalTimeout)
 
+	actualNumOfRetries := atomic.LoadInt32(&numOfRetries) // read atomically
 	if actualNumOfRetries != expectNumOfRetries {
 		t.Errorf("expect %d of retires, but got %d", expectNumOfRetries, actualNumOfRetries)
 	}

@@ -90,7 +90,7 @@ type Options struct {
 	// IssueRenewalTimeout defines timeout value for each issue() call in renewal process
 	IssueRenewalTimeout time.Duration
 	// IssuePollInterval defines an interval time for each subroutine call (check CSR status) within issue() function
-	// Note, the issuePollInterval should be less than renewalIssueTimeout
+	// Note, the IssuePollInterval should be less than IssueRenewalTimeout
 	IssuePollInterval time.Duration
 }
 
@@ -159,6 +159,10 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.IssuePollInterval == 0 {
 		opts.IssuePollInterval = time.Second
 	}
+	if opts.IssuePollInterval >= opts.IssueRenewalTimeout {
+		return nil, errors.New("IssuePollInterval should be less than IssueRenewalTimeout")
+	}
+	// Check IssuePollInterval is less than IssueRenewalTimeout
 	if len(opts.NodeID) == 0 {
 		return nil, errors.New("NodeID must be set")
 	}
@@ -307,7 +311,7 @@ type Manager struct {
 	// issueRenewalTimeout defines timeout value for each issue() call in renewal process
 	issueRenewalTimeout time.Duration
 	// issuePollInterval defines an interval time for each subroutine call (check CSR status) within issue() function
-	// Note, the issuePollInterval should be less than renewalIssueTimeout
+	// Note, the issuePollInterval should be less than issueRenewalTimeout
 	issuePollInterval time.Duration
 
 	// requestNameGenerator generates a new random name for a certificaterequest object
