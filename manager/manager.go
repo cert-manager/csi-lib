@@ -496,9 +496,9 @@ func certificateRequestCanBeResumed(req *cmapi.CertificateRequest) bool {
 func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metadata.Metadata, key crypto.PrivateKey, req *cmapi.CertificateRequest) error {
 	log := m.log.WithValues("volume_id", volumeID)
 
-	// Poll every 1s for the CertificateRequest to be ready
+	// Poll every 200ms for the CertificateRequest to be ready
 	lastFailureReason := ""
-	if err := wait.PollUntilWithContext(ctx, time.Second, func(ctx context.Context) (done bool, err error) {
+	if err := wait.PollUntilWithContext(ctx, time.Millisecond*200, func(ctx context.Context) (done bool, err error) {
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			// A NotFound error implies something deleted the resource - fail
