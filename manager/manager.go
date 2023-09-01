@@ -499,8 +499,10 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 	// Poll every 200ms for the CertificateRequest to be ready
 	lastFailureReason := ""
 	if err := wait.PollUntilWithContext(ctx, time.Millisecond*200, func(ctx context.Context) (done bool, err error) {
+		log.V(4).Info("Reading CertificateRequest from lister cache")
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
+			log.V(4).Info("Failed to read CertificateRequest from lister cache", "error", err)
 			// A NotFound error implies something deleted the resource - fail
 			// early to allow a retry to occur at a later time if needed.
 			return false, err
@@ -524,6 +526,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 
 		isApproved := apiutil.CertificateRequestIsApproved(updatedReq)
 		if !isApproved {
+			log.V(4).Info("CertificateRequest is not explicitly approved - continuing to check if the request has been issued anyway")
 			lastFailureReason = fmt.Sprintf("request %q has not yet been approved by approval plugin", updatedReq.Name)
 			// we don't stop execution here, as some versions of cert-manager (and some external issuer plugins)
 			// may not be aware/utilise approval.
@@ -533,6 +536,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 
 		readyCondition := apiutil.GetCertificateRequestCondition(updatedReq, cmapi.CertificateRequestConditionReady)
 		if readyCondition == nil {
+			log.V(4).Info("Ready condition not found - will recheck...")
 			// only overwrite the approval failure message if the request is actually approved
 			// otherwise we may hide more useful information from the user by accident.
 			if isApproved {
@@ -543,10 +547,12 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 
 		switch readyCondition.Reason {
 		case cmapi.CertificateRequestReasonIssued:
+			log.V(4).Info("CertificateRequest has been issued!")
 			break
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
+			log.V(4).Info("CertificateRequest is still pending...")
 			if isApproved {
 				lastFailureReason = fmt.Sprintf("request %q is pending: %v", updatedReq.Name, readyCondition.Message)
 			}
@@ -578,6 +584,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		return fmt.Errorf("calculating next issuance time: %w", err)
 	}
 	meta.NextIssuanceTime = &renewalPoint
+	log.V(4).Info("Persisting next issuance time to metadata store", "next_issuance_time", renewalPoint)
 
 	if err := m.writeKeypair(meta, key, req.Status.Certificate, req.Status.CA); err != nil {
 		return fmt.Errorf("writing keypair: %w", err)
@@ -589,6 +596,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 	// Without this, the renewal would pick up the existing issued certificate and re-issue, rather than requesting
 	// a new certificate.
 	m.deletePendingRequestPrivateKey(req.UID)
+	log.V(4).Info("Removed pending request private key from internal cache")
 
 	return nil
 }
