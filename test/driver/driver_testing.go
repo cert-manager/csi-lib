@@ -27,7 +27,7 @@ import (
 	fakeclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr"
-	logrtesting "github.com/go-logr/logr/testing"
+	"github.com/go-logr/logr/testr"
 	"google.golang.org/grpc"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/mount-utils"
@@ -59,7 +59,7 @@ type Options struct {
 
 func Run(t *testing.T, opts Options) (Options, csi.NodeClient, func()) {
 	if opts.Log == nil {
-		logger := logrtesting.NewTestLogger(t)
+		logger := testr.NewWithOptions(t, testr.Options{Verbosity: 999999})
 		opts.Log = &logger
 	}
 	if opts.Clock == nil {
