@@ -209,6 +209,7 @@ func NewManager(opts Options) (*Manager, error) {
 		reqs, err := lister.List(labels.Everything())
 		if err != nil {
 			janitorLogger.Error(err, "failed listing existing requests")
+			return
 		}
 
 		existsMap := make(map[types.UID]struct{})
