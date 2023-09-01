@@ -364,12 +364,12 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "maxRequestsPerVolume=1: all stale CSRs should be deleted",
+			name: "maxRequestsPerVolume=1: one stale CSR should be left",
 			objects: []*cmapi.CertificateRequest{
 				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
-			toBeDeleted: []string{"cr-2", "cr-1"},
+			toBeDeleted: []string{"cr-2"},
 			fields: fields{
 				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 1,
@@ -377,12 +377,11 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "maxRequestsPerVolume=2: 1 stale CSRs should be left",
+			name: "maxRequestsPerVolume=2: 2 stale CSRs should be left",
 			objects: []*cmapi.CertificateRequest{
 				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
-			toBeDeleted: []string{"cr-2"},
 			fields: fields{
 				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 2,

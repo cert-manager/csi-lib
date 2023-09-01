@@ -627,13 +627,12 @@ func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, vol
 	if err != nil {
 		return err
 	}
-
-	if len(reqs) < m.maxRequestsPerVolume {
+	if len(reqs) <= m.maxRequestsPerVolume {
 		return nil
 	}
 
 	// start at the end of the slice and work back to maxRequestsPerVolume
-	for i := len(reqs) - 1; i >= m.maxRequestsPerVolume-1; i-- {
+	for i := len(reqs) - 1; i > m.maxRequestsPerVolume-1; i-- {
 		toDelete := reqs[i]
 		if err := m.client.CertmanagerV1().CertificateRequests(toDelete.Namespace).Delete(ctx, toDelete.Name, metav1.DeleteOptions{}); err != nil {
 			if apierrors.IsNotFound(err) {
