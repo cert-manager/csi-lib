@@ -293,7 +293,6 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 	expBackOffJitter := 0.0 // No jitter to the 'duration', so we could calculate number of retries easily
 	expBackOffSteps := 100  // The maximum number of backoff attempts
 	issueRenewalTimeout := expBackOffDuration
-	issuePollInterval := issueRenewalTimeout / 10
 
 	// Expected number of retries in each expBackOff cycle :=
 	// 				⌈log base expBackOffFactor of (expBackOffCap/expBackOffDuration)⌉
@@ -314,14 +313,13 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 		Jitter:   expBackOffJitter,
 		Steps:    expBackOffSteps,
 	}
-	opts.IssueRenewalTimeout = issueRenewalTimeout
-	opts.IssuePollInterval = issuePollInterval
 	opts.ReadyToRequest = func(meta metadata.Metadata) (bool, string) {
 		// ReadyToRequest will be called by issue()
 		atomic.AddInt32(&numOfRetries, 1) // run in a goroutine, thus increment it atomically
 		return true, ""                   // AlwaysReadyToRequest
 	}
 	m, err := NewManager(opts)
+	m.issueRenewalTimeout = issueRenewalTimeout
 	if err != nil {
 		t.Fatal(err)
 	}

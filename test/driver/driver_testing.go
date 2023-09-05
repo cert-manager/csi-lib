@@ -22,7 +22,6 @@ import (
 	"math"
 	"net"
 	"testing"
-	"time"
 
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	fakeclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
@@ -117,8 +116,6 @@ func Run(t *testing.T, opts Options) (Options, csi.NodeClient, func()) {
 		WriteKeypair:         opts.WriteKeypair,
 		ReadyToRequest:       opts.ReadyToRequest,
 		RenewalBackoffConfig: &wait.Backoff{Steps: math.MaxInt32}, // don't actually wait (i.e. set all backoff times to 0)
-		IssueRenewalTimeout:  time.Second,                         // timeout issue renewal call in a second
-		IssuePollInterval:    100 * time.Millisecond,              // check CSR status every 0.1s during issue call
 	})
 
 	d := driver.NewWithListener(lis, *opts.Log, driver.Options{
