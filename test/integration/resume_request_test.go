@@ -20,7 +20,6 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -38,7 +37,14 @@ import (
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
 
-func testResumesExistingRequest(t *testing.T, issueBeforeCall bool) {
+type WhenToCallIssue bool
+
+const (
+	CallIssueDuringPublish  = false
+	CallIssueBetweenPublish = true
+)
+
+func testResumesExistingRequest(t *testing.T, issueBeforeCall WhenToCallIssue) {
 	store := storage.NewMemoryFS()
 	ns := "certificaterequest-namespace"
 	clock := fakeclock.NewFakeClock(time.Now())
@@ -66,13 +72,9 @@ func testResumesExistingRequest(t *testing.T, issueBeforeCall bool) {
 			return store.WriteMetadata(meta.VolumeID, meta)
 		},
 	})
-	defer stop()
+	t.Cleanup(stop)
 
-	tmpDir, err := os.MkdirTemp("", "*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// create a root, non-expiring context
 	ctx := context.Background()
@@ -91,8 +93,8 @@ func testResumesExistingRequest(t *testing.T, issueBeforeCall bool) {
 
 	// create a context that expires in 2s (enough time for at least a single call of `issue`)
 	twoSecondCtx, cancel := context.WithTimeout(ctx, time.Second*2)
-	defer cancel()
-	_, err = cl.NodePublishVolume(twoSecondCtx, nodePublishVolumeRequest)
+	t.Cleanup(cancel)
+	_, err := cl.NodePublishVolume(twoSecondCtx, nodePublishVolumeRequest)
 	// assert that an error has been returned - we don't mind what kind of error, as due to the async nature of
 	// de-registering metadata from the metadata store upon failures, there is a slim chance that a metadata read error
 	// can be returned instead of a deadline exceeded error.
@@ -155,11 +157,11 @@ func testResumesExistingRequest(t *testing.T, issueBeforeCall bool) {
 }
 
 func TestResumesExistingRequest_IssuedBetweenPublishCalls(t *testing.T) {
-	testResumesExistingRequest(t, true)
+	testResumesExistingRequest(t, CallIssueBetweenPublish)
 }
 
 func TestResumesExistingRequest_IssuedDuringPublishCall(t *testing.T) {
-	testResumesExistingRequest(t, false)
+	testResumesExistingRequest(t, CallIssueDuringPublish)
 }
 
 // ensureOneRequestExists will fail the test if more than a single CertificateRequest exists.

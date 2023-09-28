@@ -206,6 +206,8 @@ func NewManager(opts Options) (*Manager, error) {
 	// added the entry to the map instead, and only purged items from the map that are older that N duration (TBD).
 	janitorLogger := opts.Log.WithName("pending_request_janitor")
 	go wait.Until(func() {
+		requestToPrivateKeyLock.Lock()
+		defer requestToPrivateKeyLock.Unlock()
 		reqs, err := lister.List(labels.Everything())
 		if err != nil {
 			janitorLogger.Error(err, "failed listing existing requests")
@@ -217,8 +219,6 @@ func NewManager(opts Options) (*Manager, error) {
 			existsMap[req.UID] = struct{}{}
 		}
 
-		requestToPrivateKeyLock.Lock()
-		defer requestToPrivateKeyLock.Unlock()
 		for uid := range requestToPrivateKeyMap {
 			if _, ok := existsMap[uid]; !ok {
 				// purge the item from the map as it does not exist in the apiserver
@@ -231,9 +231,11 @@ func NewManager(opts Options) (*Manager, error) {
 	informerFactory.WaitForCacheSync(stopCh)
 
 	m := &Manager{
-		client:                  opts.Client,
-		clientForMetadata:       opts.ClientForMetadata,
-		lister:                  lister,
+		client:            opts.Client,
+		clientForMetadata: opts.ClientForMetadata,
+		lister:            lister,
+		// we pass a pointer to the mutex as the janitor routine above also uses this lock,
+		// so we want to avoid making a copy of it
 		requestToPrivateKeyLock: &requestToPrivateKeyLock,
 		requestToPrivateKeyMap:  requestToPrivateKeyMap,
 		metadataReader:          opts.MetadataReader,
