@@ -171,6 +171,8 @@ func NewManager(opts Options) (*Manager, error) {
 	lister := informerFactory.Certmanager().V1().CertificateRequests().Lister()
 	informerFactory.Certmanager().V1().CertificateRequests().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: func(obj interface{}) {
+			requestToPrivateKeyLock.Lock()
+			defer requestToPrivateKeyLock.Unlock()
 			key, ok := obj.(string)
 			if !ok {
 				return
@@ -186,8 +188,6 @@ func NewManager(opts Options) (*Manager, error) {
 				return
 			}
 
-			requestToPrivateKeyLock.Lock()
-			defer requestToPrivateKeyLock.Unlock()
 			if _, ok := requestToPrivateKeyMap[req.UID]; ok {
 				delete(requestToPrivateKeyMap, req.UID)
 			}
