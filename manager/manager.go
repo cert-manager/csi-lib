@@ -189,6 +189,7 @@ func NewManager(opts Options) (*Manager, error) {
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
+		issueRenewalTimeout:  time.Second * 60, // issueRenewalTimeout set to align with NodePublishVolume timeout value
 		requestNameGenerator: func() string {
 			return string(uuid.NewUUID())
 		},
@@ -290,6 +291,9 @@ type Manager struct {
 
 	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
 	backoffConfig wait.Backoff
+
+	// issueRenewalTimeout defines timeout value for each issue() call in renewal process
+	issueRenewalTimeout time.Duration
 
 	// requestNameGenerator generates a new random name for a certificaterequest object
 	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
@@ -634,7 +638,9 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
 					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func(ctx context.Context) (bool, error) {
 						log.Info("Triggering new issuance")
-						if err := m.issue(ctx, volumeID); err != nil {
+						issueCtx, issueCancel := context.WithTimeout(ctx, m.issueRenewalTimeout)
+						defer issueCancel()
+						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							return false, nil
 						}
