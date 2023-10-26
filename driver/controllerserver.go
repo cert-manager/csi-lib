@@ -23,7 +23,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var _ csi.ControllerServer = &controllerServer{} // compiler validation
+
 type controllerServer struct {
+}
+
+func (cs *controllerServer) ControllerModifyVolume(ctx context.Context, request *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "ControllerModifyVolume not implemented")
 }
 
 func (cs *controllerServer) ControllerGetVolume(ctx context.Context, request *csi.ControllerGetVolumeRequest) (*csi.ControllerGetVolumeResponse, error) {
