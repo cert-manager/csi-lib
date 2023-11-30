@@ -304,7 +304,6 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 	expectGlobalTimeout := 2 * time.Second
 
 	var numOfRetries int32 = 0 // init
-
 	opts := newDefaultTestOptions(t)
 	opts.RenewalBackoffConfig = &wait.Backoff{
 		Duration: expBackOffDuration,
@@ -313,15 +312,15 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 		Jitter:   expBackOffJitter,
 		Steps:    expBackOffSteps,
 	}
-	opts.ReadyToRequest = func(meta metadata.Metadata) (bool, string) {
-		// ReadyToRequest will be called by issue()
-		atomic.AddInt32(&numOfRetries, 1) // run in a goroutine, thus increment it atomically
-		return true, ""                   // AlwaysReadyToRequest
-	}
 	m, err := NewManager(opts)
-	m.issueRenewalTimeout = issueRenewalTimeout
 	if err != nil {
 		t.Fatal(err)
+	}
+	m.issueRenewalTimeout = issueRenewalTimeout
+	// Increment the 'numOfRetries' counter whenever issue() is called.
+	// TODO: replace usages of this function with reading from metrics.
+	m.doNotUse_CallOnEachIssue = func() {
+		atomic.AddInt32(&numOfRetries, 1) // run in a goroutine, thus increment it atomically
 	}
 
 	// Register a new volume with the metadata store
@@ -347,7 +346,7 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 
 	actualNumOfRetries := atomic.LoadInt32(&numOfRetries) // read atomically
 	if actualNumOfRetries != expectNumOfRetries {
-		t.Errorf("expect %d of retires, but got %d", expectNumOfRetries, actualNumOfRetries)
+		t.Errorf("expect %d retires, but got %d", expectNumOfRetries, actualNumOfRetries)
 	}
 }
 
@@ -364,12 +363,12 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name: "maxRequestsPerVolume=1: all stale CSRs should be deleted",
+			name: "maxRequestsPerVolume=1: one stale CSR should be left",
 			objects: []*cmapi.CertificateRequest{
 				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
-			toBeDeleted: []string{"cr-2", "cr-1"},
+			toBeDeleted: []string{"cr-2"},
 			fields: fields{
 				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 1,
@@ -377,12 +376,11 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "maxRequestsPerVolume=2: 1 stale CSRs should be left",
+			name: "maxRequestsPerVolume=2: 2 stale CSRs should be left",
 			objects: []*cmapi.CertificateRequest{
 				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
-			toBeDeleted: []string{"cr-2"},
 			fields: fields{
 				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 2,
