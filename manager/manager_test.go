@@ -368,7 +368,7 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 				cr("cr-1", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 				cr("cr-2", defaultTestNamespace, "nodeID-1", "volumeID-1"),
 			},
-			toBeDeleted: []string{"cr-2"},
+			toBeDeleted: []string{"cr-1"}, // older CR will be deleted
 			fields: fields{
 				nodeID:               "nodeID-1",
 				maxRequestsPerVolume: 1,
@@ -415,7 +415,8 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 			}
 			defer m.Stop()
 
-			for _, req := range test.objects {
+			for i, req := range test.objects {
+				req.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Duration(i) * time.Second))
 				if _, err := m.client.CertmanagerV1().CertificateRequests(req.Namespace).Create(ctx, req, metav1.CreateOptions{}); err != nil {
 					t.Fatal(err)
 				}
