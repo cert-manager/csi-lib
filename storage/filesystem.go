@@ -47,7 +47,7 @@ type Filesystem struct {
 	baseDir string
 
 	// used by the 'read only' methods
-	fs fs.FS
+	fs fs.StatFS
 
 	// FixedFSGroup is an optional field which will set the gid ownership of all
 	// volume's data directories to this value.
@@ -71,7 +71,7 @@ func NewFilesystem(log logr.Logger, baseDir string) (*Filesystem, error) {
 		baseDir: baseDir,
 		// Use the rootfs as the DirFS so that paths passed to both read &
 		// write methods on this struct use a consistent root.
-		fs: os.DirFS("/"),
+		fs: os.DirFS("/").(fs.StatFS),
 	}
 
 	notMnt, err := mount.IsNotMountPoint(mount.New(""), f.tempfsPath())
@@ -110,7 +110,7 @@ func (f *Filesystem) ListVolumes() ([]string, error) {
 
 	var vols []string
 	for _, dir := range dirs {
-		file, err := f.fs.Open(f.metadataPathForVolumeID(dir.Name()))
+		_, err := f.fs.Stat(f.metadataPathForVolumeID(dir.Name()))
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			f.log.Info("Directory exists but does not contain a metadata file - deleting directory and its contents", "volume_id", dir.Name())
@@ -123,8 +123,6 @@ func (f *Filesystem) ListVolumes() ([]string, error) {
 			// discovered a volume/directory that does not contain a metadata file
 			return nil, err
 		}
-		// immediately close the file as we just need to verify it exists
-		file.Close()
 		vols = append(vols, dir.Name())
 	}
 
