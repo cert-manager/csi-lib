@@ -118,6 +118,25 @@ func TestFilesystem_ListVolumes(t *testing.T) {
 	}
 }
 
+func TestFilesystem_ListVolumes_CleansUpCorruptVolumes(t *testing.T) {
+	backend := &Filesystem{
+		fs: fstest.MapFS{
+			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte{}},
+			"inmemfs/fake-emptyvolume/nothing":  &fstest.MapFile{Data: []byte{}},
+		},
+	}
+
+	vols, err := backend.ListVolumes()
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if len(vols) != 1 {
+		t.Errorf("expected 1 volume to be returned but got: %+v", vols)
+	}
+	if vols[0] != "fake-volume" {
+		t.Errorf("expected only entry to be 'fake-volume' but got: %s", vols[0])
+	}
+}
 func Test_fsGroupForMetadata(t *testing.T) {
 	intPtr := func(i int64) *int64 {
 		return &i
