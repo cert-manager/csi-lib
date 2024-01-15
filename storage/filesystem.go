@@ -111,9 +111,16 @@ func (f *Filesystem) ListVolumes() ([]string, error) {
 	var vols []string
 	for _, dir := range dirs {
 		file, err := f.fs.Open(f.metadataPathForVolumeID(dir.Name()))
-		if err != nil {
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			f.log.Info("Directory exists but does not contain a metadata file - deleting directory and its contents", "volume_id", dir.Name())
+			if err := f.RemoveVolume(dir.Name()); err != nil {
+				return nil, fmt.Errorf("deleting stale volume: %v", err)
+			}
+			// continue to skip this loop iteration
+			continue
+		case err != nil:
 			// discovered a volume/directory that does not contain a metadata file
-			// TODO: log this error to allow startup to continue
 			return nil, err
 		}
 		// immediately close the file as we just need to verify it exists
