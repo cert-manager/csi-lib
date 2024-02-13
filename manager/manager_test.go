@@ -30,7 +30,8 @@ import (
 )
 
 func TestManager_ManageVolumeImmediate_issueOnceAndSucceed(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	opts := newDefaultTestOptions(t)
 	m, err := NewManager(opts)
@@ -39,9 +40,7 @@ func TestManager_ManageVolumeImmediate_issueOnceAndSucceed(t *testing.T) {
 	}
 
 	// Setup a goroutine to issue one CertificateRequest
-	stopCh := make(chan struct{})
-	go testutil.IssueOneRequest(t, opts.Client, defaultTestNamespace, stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueOneRequest(ctx, t, opts.Client, defaultTestNamespace, selfSignedExampleCertificate, []byte("ca bytes"))
 
 	// Register a new volume with the metadata store
 	store := opts.MetadataReader.(storage.Interface)
@@ -200,7 +199,7 @@ func TestManager_ResumesManagementOfExistingVolumes(t *testing.T) {
 
 	m.requestNameGenerator = func() string { return "certificaterequest-name" }
 	// Automatically issue the request once created
-	go testutil.IssueOneRequest(t, opts.Client, defaultTestNamespace, ctx.Done(), selfSignedExampleCertificate, []byte("ca bytes"))
+	go testutil.IssueOneRequest(ctx, t, opts.Client, defaultTestNamespace, selfSignedExampleCertificate, []byte("ca bytes"))
 
 	// Register a new volume with the metadata store
 	meta := metadata.Metadata{
@@ -264,7 +263,7 @@ func TestManager_ManageVolume_beginsManagingAndProceedsIfNotReady(t *testing.T) 
 		t.Errorf("expected management to have started, but it did not")
 	}
 
-	if err := wait.PollUntilWithContext(ctx, time.Millisecond*500, func(ctx context.Context) (done bool, err error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*500, true, func(ctx context.Context) (done bool, err error) {
 		reqs, err := opts.Client.CertmanagerV1().CertificateRequests("").List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, err
@@ -423,7 +422,7 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 			}
 
 			// make sure client cache is in sync
-			if err := wait.PollUntilWithContext(ctx, 5*time.Millisecond, func(context.Context) (done bool, err error) {
+			if err := wait.PollUntilContextCancel(ctx, 5*time.Millisecond, false, func(context.Context) (done bool, err error) {
 				list, err := m.client.CertmanagerV1().CertificateRequests(defaultTestNamespace).List(ctx, metav1.ListOptions{})
 				if err != nil {
 					return false, err

@@ -31,7 +31,7 @@ import (
 
 func waitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmclient.Interface, ns string) (*cmapi.CertificateRequest, error) {
 	var req *cmapi.CertificateRequest
-	if err := wait.PollUntilWithContext(ctx, time.Millisecond*50, func(ctx context.Context) (done bool, err error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (done bool, err error) {
 		reqs, err := client.CertmanagerV1().CertificateRequests(ns).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, err
@@ -51,11 +51,11 @@ func waitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmcl
 	return req, nil
 }
 
-func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
-	if err := wait.PollUntil(time.Millisecond*50, func() (done bool, err error) {
-		req, err := waitAndGetOneCertificateRequestInNamespace(context.TODO(), client, namespace)
+func IssueOneRequest(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, cert, ca []byte) {
+	if err := func() error {
+		req, err := waitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
 		if err != nil {
-			return false, err
+			return err
 		}
 
 		csr := req.DeepCopy()
@@ -67,36 +67,36 @@ func IssueOneRequest(t *testing.T, client cmclient.Interface, namespace string, 
 		})
 		csr.Status.Certificate = cert
 		csr.Status.CA = ca
-		_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(context.TODO(), csr, metav1.UpdateOptions{})
+		_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(ctx, csr, metav1.UpdateOptions{})
 		if err != nil {
-			return false, fmt.Errorf("error updating certificaterequest status: %v", err)
+			return err
 		}
-		return true, nil
-	}, stopCh); err != nil {
+
+		return nil
+	}(); err != nil {
 		t.Errorf("error automatically issuing certificaterequest: %v", err)
 	}
 }
 
 func SetCertificateRequestConditions(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, conditions ...cmapi.CertificateRequestCondition) {
-	if err := wait.PollUntilWithContext(ctx, time.Millisecond*50, func(ctx context.Context) (done bool, err error) {
-		req, err := waitAndGetOneCertificateRequestInNamespace(context.TODO(), client, namespace)
+	if err := func() error {
+		req, err := waitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
 		if err != nil {
-			return false, err
+			return err
 		}
 
 		reqCopy := req.DeepCopy()
 		for _, cond := range conditions {
 			setCertificateRequestCondition(reqCopy, cond)
 		}
-
-		req, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(ctx, reqCopy, metav1.UpdateOptions{})
+		_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(ctx, reqCopy, metav1.UpdateOptions{})
 		if err != nil {
-			return false, err
+			return err
 		}
 
-		return true, nil
-	}); err != nil {
-		t.Errorf("error automatically setting certificaterequest condition")
+		return nil
+	}(); err != nil {
+		t.Errorf("error automatically setting certificaterequest condition: %v", err)
 	}
 }
 
@@ -114,11 +114,12 @@ func setCertificateRequestCondition(req *cmapi.CertificateRequest, newCondition 
 	req.Status.Conditions = append(req.Status.Conditions, newCondition)
 }
 
-func IssueAllRequests(t *testing.T, client cmclient.Interface, namespace string, stopCh <-chan struct{}, cert, ca []byte) {
-	wait.Until(func() {
-		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(context.TODO(), metav1.ListOptions{})
+func IssueAllRequests(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, cert, ca []byte) {
+	// Continuously issue all CertificateRequests in the namespace
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (bool, error) {
+		reqs, err := client.CertmanagerV1().CertificateRequests(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
-			t.Fatal(err)
+			return false, err
 		}
 
 		for _, req := range reqs.Items {
@@ -136,11 +137,14 @@ func IssueAllRequests(t *testing.T, client cmclient.Interface, namespace string,
 
 			csr.Status.Certificate = cert
 			csr.Status.CA = ca
-			_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(context.TODO(), csr, metav1.UpdateOptions{})
+			_, err = client.CertmanagerV1().CertificateRequests(namespace).UpdateStatus(ctx, csr, metav1.UpdateOptions{})
 			if err != nil {
-				t.Fatal(err)
+				return false, err
 			}
 		}
 
-	}, time.Millisecond*50, stopCh)
+		return false, nil // continue polling
+	}); err != nil && !wait.Interrupted(err) {
+		t.Errorf("error automatically issuing certificaterequests: %v", err)
+	}
 }
