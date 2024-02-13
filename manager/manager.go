@@ -188,9 +188,7 @@ func NewManager(opts Options) (*Manager, error) {
 				return
 			}
 
-			if _, ok := requestToPrivateKeyMap[req.UID]; ok {
-				delete(requestToPrivateKeyMap, req.UID)
-			}
+			delete(requestToPrivateKeyMap, req.UID)
 		},
 	})
 
@@ -564,7 +562,6 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		switch readyCondition.Reason {
 		case cmapi.CertificateRequestReasonIssued:
 			log.V(4).Info("CertificateRequest has been issued!")
-			break
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
 		case cmapi.CertificateRequestReasonPending:
@@ -802,10 +799,8 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		select {
-		case <-stopCh:
-			cancel()
-		}
+		<-stopCh
+		cancel()
 	}()
 
 	go func() {
