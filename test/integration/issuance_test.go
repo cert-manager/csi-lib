@@ -62,6 +62,9 @@ vnEIALrtIClFU6D/mTU5wyHhN29llwfjUgJrmYWqoWTZSiwGS6YmZpry
 -----END CERTIFICATE-----`)
 
 func TestIssuesCertificate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 	opts, cl, stop := testdriver.Run(t, testdriver.Options{
@@ -90,16 +93,14 @@ func TestIssuesCertificate(t *testing.T) {
 	})
 	defer stop()
 
-	stopCh := make(chan struct{})
-	go testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueOneRequest(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	_, err = cl.NodePublishVolume(context.TODO(), &csi.NodePublishVolumeRequest{
+	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "test-vol",
 		VolumeContext: map[string]string{
 			"csi.storage.k8s.io/ephemeral":     "true",
@@ -126,6 +127,9 @@ func TestIssuesCertificate(t *testing.T) {
 }
 
 func TestManager_CleansUpOldRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
@@ -165,15 +169,13 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 		Spec:   cmapi.CertificateRequestSpec{},
 		Status: cmapi.CertificateRequestStatus{},
 	}
-	cr, err := opts.Client.CertmanagerV1().CertificateRequests(cr.Namespace).Create(context.TODO(), cr, metav1.CreateOptions{})
+	cr, err := opts.Client.CertmanagerV1().CertificateRequests(cr.Namespace).Create(ctx, cr, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Set up a goroutine that automatically issues all CertificateRequests
-	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "testns", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueAllRequests(ctx, t, opts.Client, "testns", selfSignedExampleCertificate, []byte("ca bytes"))
 
 	// Call NodePublishVolume
 	tmpDir, err := os.MkdirTemp("", "*")
@@ -181,7 +183,7 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	_, err = cl.NodePublishVolume(context.TODO(), &csi.NodePublishVolumeRequest{
+	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "volume-id",
 		VolumeContext: map[string]string{
 			"csi.storage.k8s.io/ephemeral":     "true",
@@ -195,12 +197,12 @@ func TestManager_CleansUpOldRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = opts.Client.CertmanagerV1().CertificateRequests("testns").Get(context.TODO(), "test-cr", metav1.GetOptions{})
+	_, err = opts.Client.CertmanagerV1().CertificateRequests("testns").Get(ctx, "test-cr", metav1.GetOptions{})
 	if !apierrors.IsNotFound(err) {
 		t.Error("Expected 'test-cr' resource to be deleted but it still exists")
 	}
 
-	all, err := opts.Client.CertmanagerV1().CertificateRequests("testns").List(context.TODO(), metav1.ListOptions{})
+	all, err := opts.Client.CertmanagerV1().CertificateRequests("testns").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -512,7 +512,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 
 	// Poll every 200ms for the CertificateRequest to be ready
 	lastFailureReason := ""
-	if err := wait.PollUntilWithContext(ctx, time.Millisecond*200, func(ctx context.Context) (done bool, err error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*200, true, func(ctx context.Context) (done bool, err error) {
 		log.V(4).Info("Reading CertificateRequest from lister cache")
 		updatedReq, err := m.lister.CertificateRequests(req.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
@@ -582,7 +582,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		req = updatedReq
 		return true, nil
 	}); err != nil {
-		if errors.Is(err, wait.ErrWaitTimeout) {
+		if wait.Interrupted(err) {
 			// try and return a more helpful error message than "timed out waiting for the condition"
 			return fmt.Errorf("waiting for request: %s", lastFailureReason)
 		}
@@ -720,7 +720,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 	// This ensures callers that read from the lister/cache do not enter a confused state
 	// where the CertificateRequest does not exist after calling submitRequest due to
 	// cache timing issues.
-	wait.PollUntil(time.Millisecond*50, func() (bool, error) {
+	wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (bool, error) {
 		_, err := m.lister.CertificateRequests(csrBundle.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			return false, nil
@@ -729,7 +729,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			return false, err
 		}
 		return true, nil
-	}, ctx.Done())
+	})
 
 	return req, nil
 }
@@ -835,7 +835,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 						}
 						return true, nil
 					}); err != nil {
-						if errors.Is(err, wait.ErrWaitTimeout) || errors.Is(err, context.DeadlineExceeded) {
+						if wait.Interrupted(err) {
 							continue
 						}
 						// this should never happen as the function above never actually returns errors

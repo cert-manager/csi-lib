@@ -43,6 +43,9 @@ import (
 // Tests to ensure that if a certificate is immediately ready to be requested when NodePublishVolume
 // is called, the call will be blocking until the volume is actually ready.
 func Test_PublishCallBlocksIfReadyToRequestDespiteContinueOnNotReadyTrue(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
@@ -75,17 +78,13 @@ func Test_PublishCallBlocksIfReadyToRequestDespiteContinueOnNotReadyTrue(t *test
 	defer stop()
 
 	// Setup a routine to issue/sign the request IF it is created
-	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueAllRequests(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
 	// This call will block until an issuance is successfully completed.
 	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "test-vol",
@@ -116,6 +115,9 @@ func Test_PublishCallBlocksIfReadyToRequestDespiteContinueOnNotReadyTrue(t *test
 }
 
 func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
@@ -156,17 +158,13 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 	defer stop()
 
 	// Setup a routine to issue/sign the request IF it is created
-	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueAllRequests(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer cancel()
 	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "test-vol",
 		VolumeContext: map[string]string{
@@ -181,7 +179,7 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := wait.PollUntil(time.Second, func() (done bool, err error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (done bool, err error) {
 		files, err := store.ReadFiles("test-vol")
 		if errors.Is(err, storage.ErrNotFound) || len(files) <= 1 {
 			return false, nil
@@ -196,12 +194,15 @@ func Test_CompletesIfNotReadyToRequest_ContinueOnNotReadyEnabled(t *testing.T) {
 			return false, fmt.Errorf("unexpected certificate data: %v", files["cert"])
 		}
 		return true, nil
-	}, ctx.Done()); err != nil {
+	}); err != nil {
 		t.Error(err)
 	}
 }
 
 func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 
@@ -236,16 +237,12 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	defer stop()
 
 	// Setup a routine to issue/sign the request IF it is created
-	stopCh := make(chan struct{})
-	go testutil.IssueAllRequests(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
-	defer close(stopCh)
+	go testutil.IssueAllRequests(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 	tmpDir, err := os.MkdirTemp("", "*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
 	_, err = cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
 		VolumeId: "test-vol",
 		VolumeContext: map[string]string{
@@ -265,13 +262,13 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 	// being cleaned up of the persisted metadata file.
 	ctx, cancel2 := context.WithTimeout(context.Background(), time.Second)
 	defer cancel2()
-	if err := wait.PollUntil(time.Millisecond*100, func() (bool, error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*100, true, func(ctx context.Context) (bool, error) {
 		_, err := store.ReadFiles("test-vol")
 		if err != storage.ErrNotFound {
 			return false, nil
 		}
 		return true, nil
-	}, ctx.Done()); err != nil {
+	}); err != nil {
 		t.Errorf("failed to wait for storage backend to return NotFound: %v", err)
 	}
 }

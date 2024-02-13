@@ -45,6 +45,10 @@ const (
 )
 
 func testResumesExistingRequest(t *testing.T, issueBeforeCall WhenToCallIssue) {
+	// create a root, non-expiring context
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	store := storage.NewMemoryFS()
 	ns := "certificaterequest-namespace"
 	clock := fakeclock.NewFakeClock(time.Now())
@@ -75,9 +79,6 @@ func testResumesExistingRequest(t *testing.T, issueBeforeCall WhenToCallIssue) {
 	t.Cleanup(stop)
 
 	tmpDir := t.TempDir()
-
-	// create a root, non-expiring context
-	ctx := context.Background()
 
 	// We are going to submit this request multiple times, so lets just write it out once
 	nodePublishVolumeRequest := &csi.NodePublishVolumeRequest{
@@ -120,17 +121,15 @@ func testResumesExistingRequest(t *testing.T, issueBeforeCall WhenToCallIssue) {
 	// ensure the same certificaterequest object still exists
 	ensureOneRequestExists(ctx, t, opts.Client, ns, existingRequestUID)
 
-	stopCh := make(chan struct{})
-	defer close(stopCh)
 	if issueBeforeCall {
 		// we don't run this in a goroutine so we can be sure the certificaterequest is completed BEFORE the issue loop is entered
-		testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
+		testutil.IssueOneRequest(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 	} else {
 		go func() {
 			// allow 500ms before actually issuing the request so we can be sure we're within the issue() function call
 			// when the certificaterequest is finally completed
 			time.Sleep(time.Millisecond * 500)
-			testutil.IssueOneRequest(t, opts.Client, "certificaterequest-namespace", stopCh, selfSignedExampleCertificate, []byte("ca bytes"))
+			testutil.IssueOneRequest(ctx, t, opts.Client, "certificaterequest-namespace", selfSignedExampleCertificate, []byte("ca bytes"))
 		}()
 	}
 
