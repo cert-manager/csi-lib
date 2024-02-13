@@ -811,6 +811,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 	go func() {
 		// check every volume once per second
 		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-stopCh:
