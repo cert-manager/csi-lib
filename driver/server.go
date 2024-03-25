@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -25,12 +26,10 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 type GRPCServer struct {
-	log    logr.Logger
 	server *grpc.Server
 	lis    net.Listener
 }

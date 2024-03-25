@@ -111,18 +111,18 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	}
 
 	log.Info("Ensuring data directory for volume is mounted into pod...")
-	notMnt, err := mount.IsNotMountPoint(ns.mounter, req.GetTargetPath())
+	isMnt, err := ns.mounter.IsMountPoint(req.GetTargetPath())
 	switch {
 	case os.IsNotExist(err):
 		if err := os.MkdirAll(req.GetTargetPath(), 0440); err != nil {
 			return nil, err
 		}
-		notMnt = true
+		isMnt = false
 	case err != nil:
 		return nil, err
 	}
 
-	if !notMnt {
+	if isMnt {
 		// Nothing more to do if the targetPath is already a bind mount
 		log.Info("Volume already mounted to pod, nothing to do")
 		success = true
@@ -158,11 +158,12 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 	ns.manager.UnmanageVolume(request.GetVolumeId())
 	log.Info("Stopped management of volume")
 
-	notMnt, err := mount.IsNotMountPoint(ns.mounter, request.GetTargetPath())
+	isMnt, err := ns.mounter.IsMountPoint(request.GetTargetPath())
 	if err != nil {
 		return nil, err
 	}
-	if !notMnt {
+
+	if isMnt {
 		if err := ns.mounter.Unmount(request.GetTargetPath()); err != nil {
 			return nil, err
 		}
