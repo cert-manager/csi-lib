@@ -169,7 +169,7 @@ func NewManager(opts Options) (*Manager, error) {
 	// Fetch the lister before calling Start() to ensure this informer is
 	// registered with the factory
 	lister := informerFactory.Certmanager().V1().CertificateRequests().Lister()
-	informerFactory.Certmanager().V1().CertificateRequests().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	if _, err := informerFactory.Certmanager().V1().CertificateRequests().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		DeleteFunc: func(obj interface{}) {
 			requestToPrivateKeyLock.Lock()
 			defer requestToPrivateKeyLock.Unlock()
@@ -190,7 +190,9 @@ func NewManager(opts Options) (*Manager, error) {
 
 			delete(requestToPrivateKeyMap, req.UID)
 		},
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("failed to add event handler to CertificateRequest informer: %w", err)
+	}
 
 	// create a stop channel that manages all sub goroutines
 	stopCh := make(chan struct{})
@@ -720,7 +722,7 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 	// This ensures callers that read from the lister/cache do not enter a confused state
 	// where the CertificateRequest does not exist after calling submitRequest due to
 	// cache timing issues.
-	wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (bool, error) {
 		_, err := m.lister.CertificateRequests(csrBundle.Namespace).Get(req.Name)
 		if apierrors.IsNotFound(err) {
 			return false, nil
@@ -729,7 +731,9 @@ func (m *Manager) submitRequest(ctx context.Context, meta metadata.Metadata, csr
 			return false, err
 		}
 		return true, nil
-	})
+	}); err != nil {
+		return nil, fmt.Errorf("waiting for CertificateRequest to be observed by lister: %w", err)
+	}
 
 	return req, nil
 }

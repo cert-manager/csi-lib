@@ -20,8 +20,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -74,7 +74,7 @@ func NewFilesystem(log logr.Logger, baseDir string) (*Filesystem, error) {
 		fs: os.DirFS("/").(fs.StatFS),
 	}
 
-	notMnt, err := mount.IsNotMountPoint(mount.New(""), f.tempfsPath())
+	isMnt, err := mount.New("").IsMountPoint(f.tempfsPath())
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -84,7 +84,7 @@ func NewFilesystem(log logr.Logger, baseDir string) (*Filesystem, error) {
 		}
 	}
 
-	if notMnt {
+	if !isMnt {
 		if err := mount.New("").Mount("tmpfs", f.tempfsPath(), "tmpfs", []string{}); err != nil {
 			return nil, fmt.Errorf("mounting tmpfs: %w", err)
 		}
@@ -290,7 +290,7 @@ func (f *Filesystem) ReadFile(volumeID, name string) ([]byte, error) {
 	}
 	defer file.Close()
 
-	return ioutil.ReadAll(file)
+	return io.ReadAll(file)
 }
 
 // metadataPathForVolumeID returns the metadata.json path for the volume with
