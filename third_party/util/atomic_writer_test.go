@@ -3,10 +3,13 @@
 
 /*
 Copyright 2016 The Kubernetes Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -14,10 +17,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/20d0ab7ae808aaddb1556c3c38ca0607663c50ac/pkg/volume/util/atomic_writer_test.go
+
 package util
 
 import (
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -225,7 +231,7 @@ func TestPathsToRemove(t *testing.T) {
 		defer os.RemoveAll(targetDir)
 
 		writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
-		err = writer.Write(tc.payload1)
+		err = writer.Write(tc.payload1, nil)
 		if err != nil {
 			t.Errorf("%v: unexpected error writing: %v", tc.name, err)
 			continue
@@ -393,7 +399,7 @@ IAAAAAAAsDyZDwU=`
 		defer os.RemoveAll(targetDir)
 
 		writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
-		err = writer.Write(tc.payload)
+		err = writer.Write(tc.payload, nil)
 		if err != nil && tc.success {
 			t.Errorf("%v: unexpected error writing payload: %v", tc.name, err)
 			continue
@@ -570,7 +576,7 @@ func TestUpdate(t *testing.T) {
 
 		writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
 
-		err = writer.Write(tc.first)
+		err = writer.Write(tc.first, nil)
 		if err != nil {
 			t.Errorf("%v: unexpected error writing: %v", tc.name, err)
 			continue
@@ -581,7 +587,7 @@ func TestUpdate(t *testing.T) {
 			continue
 		}
 
-		err = writer.Write(tc.next)
+		err = writer.Write(tc.next, nil)
 		if err != nil {
 			if tc.shouldWrite {
 				t.Errorf("%v: unexpected error writing: %v", tc.name, err)
@@ -739,7 +745,7 @@ func TestMultipleUpdates(t *testing.T) {
 		writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
 
 		for _, payload := range tc.payloads {
-			writer.Write(payload)
+			writer.Write(payload, nil)
 
 			checkVolumeContents(targetDir, tc.name, payload, t)
 		}
@@ -781,17 +787,11 @@ func checkVolumeContents(targetDir, tcName string, payload map[string]FileProjec
 		t.Errorf("Unable to read dir %v: %v", targetDir, err)
 		return
 	}
-	for _, entry := range d {
-		if strings.HasPrefix(entry.Name(), "..") {
+	for _, info := range d {
+		if strings.HasPrefix(info.Name(), "..") {
 			continue
 		}
-
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
+		if info.Type()&os.ModeSymlink != 0 {
 			p := filepath.Join(targetDir, info.Name())
 			actual, err := os.Readlink(p)
 			if err != nil {
@@ -984,5 +984,114 @@ func TestCreateUserVisibleFiles(t *testing.T) {
 				t.Fatalf("%v: symlink destination %q not same with expected data dir %q", tc.name, destination, expectedDest)
 			}
 		}
+	}
+}
+
+func TestSetPerms(t *testing.T) {
+	targetDir, err := utiltesting.MkTmpdir("atomic-write")
+	if err != nil {
+		t.Fatalf("unexpected error creating tmp dir: %v", err)
+	}
+	defer os.RemoveAll(targetDir)
+
+	// Test that setPerms() is called once and with valid timestamp directory.
+	payload1 := map[string]FileProjection{
+		"foo/bar.txt": {Mode: 0644, Data: []byte("foo")},
+		"bar/zab.txt": {Mode: 0644, Data: []byte("bar")},
+	}
+
+	var setPermsCalled int
+	writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
+	err = writer.Write(payload1, func(subPath string) error {
+		fileInfo, err := os.Stat(filepath.Join(targetDir, subPath))
+		if err != nil {
+			t.Fatalf("unexpected error getting file info: %v", err)
+		}
+		// Ensure that given timestamp directory really exists.
+		if !fileInfo.IsDir() {
+			t.Fatalf("subPath is not a directory: %v", subPath)
+		}
+		setPermsCalled++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error writing: %v", err)
+	}
+	if setPermsCalled != 1 {
+		t.Fatalf("unexpected number of calls to setPerms: %v", setPermsCalled)
+	}
+
+	// Test that errors from setPerms() are propagated.
+	payload2 := map[string]FileProjection{
+		"foo/bar.txt": {Mode: 0644, Data: []byte("foo2")},
+		"bar/zab.txt": {Mode: 0644, Data: []byte("bar2")},
+	}
+
+	err = writer.Write(payload2, func(_ string) error {
+		return fmt.Errorf("error in setPerms")
+	})
+	if err == nil {
+		t.Fatalf("expected error while writing but got nil")
+	}
+	if !strings.Contains(err.Error(), "error in setPerms") {
+		t.Fatalf("unexpected error while writing: %v", err)
+	}
+}
+
+func TestWriteAgainAfterUnexpectedExit(t *testing.T) {
+	testCases := []struct {
+		name       string
+		payload    map[string]FileProjection
+		simulateFn func(targetDir string, payload map[string]FileProjection) error
+	}{
+		{
+			name: "process killed before creating user visible files",
+			payload: map[string]FileProjection{
+				"foo": {Mode: 0644, Data: []byte("foo")},
+				"bar": {Mode: 0644, Data: []byte("bar")},
+			},
+			simulateFn: func(targetDir string, payload map[string]FileProjection) error {
+				for filename := range payload {
+					path := filepath.Join(targetDir, filename)
+					if err := os.RemoveAll(path); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			targetDir, err := utiltesting.MkTmpdir("atomic-write")
+			if err != nil {
+				t.Fatalf("unexpected error creating tmp dir: %v", err)
+			}
+			defer func() {
+				err := os.RemoveAll(targetDir)
+				if err != nil {
+					t.Errorf("%v: unexpected error removing tmp dir: %v", tc.name, err)
+				}
+			}()
+
+			writer := &AtomicWriter{targetDir: targetDir, logContext: "-test-"}
+			err = writer.Write(tc.payload, nil)
+			if err != nil {
+				t.Fatalf("unexpected error writing payload: %v", err)
+			}
+
+			err = tc.simulateFn(targetDir, tc.payload)
+			if err != nil {
+				t.Fatalf("failed to simulate the unexpected exit: %v", err)
+			}
+
+			err = writer.Write(tc.payload, nil)
+			if err != nil {
+				t.Fatalf("unexpected error writing payload again: %v", err)
+			}
+			checkVolumeContents(targetDir, tc.name, tc.payload, t)
+		})
 	}
 }
