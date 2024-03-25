@@ -258,23 +258,23 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 	}
 
 	payload := makePayload(files)
-	if err := writer.Write(payload); err != nil {
-		return err
-	}
+	setPerms := func(tsDirName string) error {
+		if fsGroup == nil {
+			return nil
+		}
 
-	// If a fsGroup is defined, Chown all files just written.
-	if fsGroup != nil {
-		// "..data" is the well-known location where the atomic writer links to the
-		// latest directory containing the files just written. Chown these real
-		// files.
-		dirName := filepath.Join(f.dataPathForVolumeID(meta.VolumeID), "..data")
-
+		// If a fsGroup is defined, Chown all files in the timestamped directory.
 		for filename := range files {
 			// Set the uid to -1 which means don't change ownership in Go.
-			if err := os.Chown(filepath.Join(dirName, filename), -1, int(*fsGroup)); err != nil {
+			if err := os.Chown(filepath.Join(tsDirName, filename), -1, int(*fsGroup)); err != nil {
 				return err
 			}
 		}
+
+		return nil
+	}
+	if err := writer.Write(payload, setPerms); err != nil {
+		return err
 	}
 
 	return nil

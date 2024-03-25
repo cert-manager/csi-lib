@@ -1,15 +1,20 @@
 /*
 Copyright 2016 The Kubernetes Authors.
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
+
     http://www.apache.org/licenses/LICENSE-2.0
+
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
+// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/20d0ab7ae808aaddb1556c3c38ca0607663c50ac/pkg/volume/util/atomic_writer.go
 
 package util
 
@@ -82,6 +87,10 @@ const (
 
 // Write does an atomic projection of the given payload into the writer's target
 // directory.  Input paths must not begin with '..'.
+// setPerms is an optional pointer to a function that caller can provide to set the
+// permissions of the newly created files before they are published. The function is
+// passed subPath which is the name of the timestamped directory that was created
+// under target directory.
 //
 // The Write algorithm is:
 //
@@ -94,13 +103,20 @@ const (
 //     portion of the payload was deleted and is still present on disk.
 //
 //  4. The data in the current timestamped directory is compared to the projected
-//     data to determine if an update is required.
+//     data to determine if an update to data directory is required.
 //
-//  5. A new timestamped dir is created
+//  5. A new timestamped dir is created if an update is required.
 //
-//  6. The payload is written to the new timestamped directory
+//  6. The payload is written to the new timestamped directory.
 //
-//  7. Symlinks and directory for new user-visible files are created (if needed).
+//  7. Permissions are set (if setPerms is not nil) on the new timestamped directory and files.
+//
+//  8. A symlink to the new timestamped directory ..data_tmp is created that will
+//     become the new data directory.
+//
+//  9. The new data directory symlink is renamed to the data directory; rename is atomic.
+//
+//  10. Symlinks and directory for new user-visible files are created (if needed).
 //
 //     For example, consider the files:
 //     <target-dir>/podName
@@ -108,23 +124,21 @@ const (
 //     <target-dir>/k8s/annotations
 //
 //     The user visible files are symbolic links into the internal data directory:
-//     <target-dir>/podName  -> ..data/podName
-//     <target-dir>/usr      -> ..data/usr
-//     <target-dir>/k8s      -> ..data/k8s
+//     <target-dir>/podName         -> ..data/podName
+//     <target-dir>/usr -> ..data/usr
+//     <target-dir>/k8s -> ..data/k8s
 //
 //     The data directory itself is a link to a timestamped directory with
 //     the real data:
-//     <target-dir>/..data   -> ..2016_02_01_15_04_05.12345678/
+//     <target-dir>/..data          -> ..2016_02_01_15_04_05.12345678/
+//     NOTE(claudiub): We need to create these symlinks AFTER we've finished creating and
+//     linking everything else. On Windows, if a target does not exist, the created symlink
+//     will not work properly if the target ends up being a directory.
 //
-//  8. A symlink to the new timestamped directory ..data_tmp is created that will
-//     become the new data directory
+//  11. Old paths are removed from the user-visible portion of the target directory.
 //
-//  9. The new data directory symlink is renamed to the data directory; rename is atomic
-//
-//  10. Old paths are removed from the user-visible portion of the target directory
-//
-//  11. The previous timestamped directory is removed, if it exists
-func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
+//  12. The previous timestamped directory is removed, if it exists.
+func (w *AtomicWriter) Write(payload map[string]FileProjection, setPerms func(subPath string) error) error {
 	// (1)
 	cleanPayload, err := validatePayload(payload)
 	if err != nil {
@@ -147,6 +161,7 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 	oldTsPath := filepath.Join(w.targetDir, oldTsDir)
 
 	var pathsToRemove sets.Set[string]
+	shouldWrite := true
 	// if there was no old version, there's nothing to remove
 	if len(oldTsDir) != 0 {
 		// (3)
@@ -161,64 +176,89 @@ func (w *AtomicWriter) Write(payload map[string]FileProjection) error {
 			klog.Errorf("%s: error determining whether payload should be written to disk: %v", w.logContext, err)
 			return err
 		} else if !should && len(pathsToRemove) == 0 {
-			klog.V(4).Infof("%s: no update required for target directory %v", w.logContext, w.targetDir)
-			return nil
+			klog.V(4).Infof("%s: write not required for data directory %v", w.logContext, oldTsDir)
+			// data directory is already up to date, but we need to make sure that
+			// the user-visible symlinks are created.
+			// See https://github.com/kubernetes/kubernetes/issues/121472 for more details.
+			// Reset oldTsDir to empty string to avoid removing the data directory.
+			shouldWrite = false
+			oldTsDir = ""
 		} else {
 			klog.V(4).Infof("%s: write required for target directory %v", w.logContext, w.targetDir)
 		}
 	}
 
-	// (5)
-	tsDir, err := w.newTimestampDir()
-	if err != nil {
-		klog.V(4).Infof("%s: error creating new ts data directory: %v", w.logContext, err)
-		return err
-	}
-	tsDirName := filepath.Base(tsDir)
+	if shouldWrite {
+		// (5)
+		tsDir, err := w.newTimestampDir()
+		if err != nil {
+			klog.V(4).Infof("%s: error creating new ts data directory: %v", w.logContext, err)
+			return err
+		}
+		tsDirName := filepath.Base(tsDir)
 
-	// (6)
-	if err = w.writePayloadToDir(cleanPayload, tsDir); err != nil {
-		klog.Errorf("%s: error writing payload to ts data directory %s: %v", w.logContext, tsDir, err)
-		return err
-	}
-	klog.V(4).Infof("%s: performed write of new data to ts data directory: %s", w.logContext, tsDir)
+		// (6)
+		if err = w.writePayloadToDir(cleanPayload, tsDir); err != nil {
+			klog.Errorf("%s: error writing payload to ts data directory %s: %v", w.logContext, tsDir, err)
+			return err
+		}
+		klog.V(4).Infof("%s: performed write of new data to ts data directory: %s", w.logContext, tsDir)
 
-	// (7)
+		// (7)
+		if setPerms != nil {
+			if err := setPerms(tsDirName); err != nil {
+				klog.Errorf("%s: error applying ownership settings: %v", w.logContext, err)
+				return err
+			}
+		}
+
+		// (8)
+		newDataDirPath := filepath.Join(w.targetDir, newDataDirName)
+		if err = os.Symlink(tsDirName, newDataDirPath); err != nil {
+			if err := os.RemoveAll(tsDir); err != nil {
+				klog.Errorf("%s: error removing new ts directory %s: %v", w.logContext, tsDir, err)
+			}
+			klog.Errorf("%s: error creating symbolic link for atomic update: %v", w.logContext, err)
+			return err
+		}
+
+		// (9)
+		if runtime.GOOS == "windows" {
+			if err := os.Remove(dataDirPath); err != nil {
+				klog.Errorf("%s: error removing data dir directory %s: %v", w.logContext, dataDirPath, err)
+			}
+			err = os.Symlink(tsDirName, dataDirPath)
+			if err := os.Remove(newDataDirPath); err != nil {
+				klog.Errorf("%s: error removing new data dir directory %s: %v", w.logContext, newDataDirPath, err)
+			}
+		} else {
+			err = os.Rename(newDataDirPath, dataDirPath)
+		}
+		if err != nil {
+			if err := os.Remove(newDataDirPath); err != nil && err != os.ErrNotExist {
+				klog.Errorf("%s: error removing new data dir directory %s: %v", w.logContext, newDataDirPath, err)
+			}
+			if err := os.RemoveAll(tsDir); err != nil {
+				klog.Errorf("%s: error removing new ts directory %s: %v", w.logContext, tsDir, err)
+			}
+			klog.Errorf("%s: error renaming symbolic link for data directory %s: %v", w.logContext, newDataDirPath, err)
+			return err
+		}
+	}
+
+	// (10)
 	if err = w.createUserVisibleFiles(cleanPayload); err != nil {
 		klog.Errorf("%s: error creating visible symlinks in %s: %v", w.logContext, w.targetDir, err)
 		return err
 	}
 
-	// (8)
-	newDataDirPath := filepath.Join(w.targetDir, newDataDirName)
-	if err = os.Symlink(tsDirName, newDataDirPath); err != nil {
-		os.RemoveAll(tsDir)
-		klog.Errorf("%s: error creating symbolic link for atomic update: %v", w.logContext, err)
-		return err
-	}
-
-	// (9)
-	if runtime.GOOS == "windows" {
-		os.Remove(dataDirPath)
-		err = os.Symlink(tsDirName, dataDirPath)
-		os.Remove(newDataDirPath)
-	} else {
-		err = os.Rename(newDataDirPath, dataDirPath)
-	}
-	if err != nil {
-		os.Remove(newDataDirPath)
-		os.RemoveAll(tsDir)
-		klog.Errorf("%s: error renaming symbolic link for data directory %s: %v", w.logContext, newDataDirPath, err)
-		return err
-	}
-
-	// (10)
+	// (11)
 	if err = w.removeUserVisiblePaths(pathsToRemove); err != nil {
 		klog.Errorf("%s: error removing old visible symlinks: %v", w.logContext, err)
 		return err
 	}
 
-	// (11)
+	// (12)
 	if len(oldTsDir) > 0 {
 		if err = os.RemoveAll(oldTsPath); err != nil {
 			klog.Errorf("%s: error removing old data directory %s: %v", w.logContext, oldTsDir, err)
