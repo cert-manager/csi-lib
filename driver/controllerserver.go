@@ -27,6 +27,7 @@ import (
 var _ csi.ControllerServer = &controllerServer{} // compiler validation
 
 type controllerServer struct {
+	csi.UnimplementedControllerServer
 }
 
 func (cs *controllerServer) ControllerModifyVolume(ctx context.Context, request *csi.ControllerModifyVolumeRequest) (*csi.ControllerModifyVolumeResponse, error) {

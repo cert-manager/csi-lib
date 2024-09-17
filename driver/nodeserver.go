@@ -42,7 +42,11 @@ type nodeServer struct {
 	log logr.Logger
 
 	continueOnNotReady bool
+
+	csi.UnimplementedNodeServer
 }
+
+var _ csi.NodeServer = &nodeServer{} // compiler checks
 
 func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	meta := metadata.FromNodePublishVolumeRequest(req)
