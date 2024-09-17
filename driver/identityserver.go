@@ -27,7 +27,10 @@ import (
 type identityServer struct {
 	name    string
 	version string
+	csi.UnimplementedIdentityServer
 }
+
+var _ csi.IdentityServer = &identityServer{} // compiler checks
 
 func NewIdentityServer(name, version string) *identityServer {
 	return &identityServer{
