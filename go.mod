@@ -3,17 +3,17 @@ module github.com/cert-manager/csi-lib
 go 1.23
 
 require (
-	github.com/cert-manager/cert-manager v1.15.3
+	github.com/cert-manager/cert-manager v1.16.1
 	github.com/container-storage-interface/spec v1.10.0
 	github.com/go-logr/logr v1.4.2
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
 	github.com/stretchr/testify v1.9.0
-	google.golang.org/grpc v1.66.2
-	k8s.io/apimachinery v0.31.1
-	k8s.io/client-go v0.31.1
+	google.golang.org/grpc v1.68.0
+	k8s.io/apimachinery v0.31.2
+	k8s.io/client-go v0.31.2
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/mount-utils v0.31.1
-	k8s.io/utils v0.0.0-20240902221715-702e33fdd3c3
+	k8s.io/mount-utils v0.31.2
+	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078
 )
 
 require (
@@ -75,7 +75,7 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/api v0.31.1 // indirect
+	k8s.io/api v0.31.2 // indirect
 	k8s.io/apiextensions-apiserver v0.31.1 // indirect
 	k8s.io/component-base v0.31.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20240903163716-9e1beecbcb38 // indirect
