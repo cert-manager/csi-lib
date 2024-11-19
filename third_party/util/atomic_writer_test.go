@@ -17,7 +17,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/20d0ab7ae808aaddb1556c3c38ca0607663c50ac/pkg/volume/util/atomic_writer_test.go
+// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/8cf18d1b5c50a4605f004264de83f7e085fd2116/pkg/volume/util/atomic_writer_test.go
 
 package util
 

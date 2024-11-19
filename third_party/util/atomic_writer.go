@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/20d0ab7ae808aaddb1556c3c38ca0607663c50ac/pkg/volume/util/atomic_writer.go
+// copied from https://raw.githubusercontent.com/kubernetes/kubernetes/4cc989a7a98f9898eb01711f67ffb9760041c139/pkg/volume/util/atomic_writer.go
 
 package util
 
@@ -376,7 +376,7 @@ func (w *AtomicWriter) pathsToRemove(payload map[string]FileProjection, oldTsDir
 	} else if err != nil {
 		return nil, err
 	}
-	klog.V(5).Infof("%s: current paths:   %+v", w.targetDir, paths.UnsortedList())
+	klog.V(5).Infof("%s: current paths:   %+v", w.targetDir, sets.List(paths))
 
 	newPaths := sets.New[string]()
 	for file := range payload {
@@ -388,7 +388,7 @@ func (w *AtomicWriter) pathsToRemove(payload map[string]FileProjection, oldTsDir
 			subPath = strings.TrimSuffix(subPath, string(os.PathSeparator))
 		}
 	}
-	klog.V(5).Infof("%s: new paths:       %+v", w.targetDir, newPaths.UnsortedList())
+	klog.V(5).Infof("%s: new paths:       %+v", w.targetDir, sets.List(newPaths))
 
 	result := paths.Difference(newPaths)
 	klog.V(5).Infof("%s: paths to remove: %+v", w.targetDir, result)
@@ -446,6 +446,7 @@ func (w *AtomicWriter) writePayloadToDir(payload map[string]FileProjection, dir 
 		if fileProjection.FsUser == nil {
 			continue
 		}
+
 		if err := os.Chown(fullPath, int(*fileProjection.FsUser), -1); err != nil {
 			klog.Errorf("%s: unable to change file %s with owner %v: %v", w.logContext, fullPath, int(*fileProjection.FsUser), err)
 			return err
