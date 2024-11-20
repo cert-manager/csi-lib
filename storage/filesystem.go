@@ -245,13 +245,6 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		return err
 	}
 
-	// If a fsGroup is defined, Chown the directory to that group.
-	if fsGroup != nil {
-		if err := os.Chown(f.dataPathForVolumeID(meta.VolumeID), -1, int(*fsGroup)); err != nil {
-			return fmt.Errorf("failed to chown data dir to gid %v: %w", *fsGroup, err)
-		}
-	}
-
 	writer, err := util.NewAtomicWriter(f.dataPathForVolumeID(meta.VolumeID), fmt.Sprintf("volumeID %v", meta.VolumeID))
 	if err != nil {
 		return err
@@ -263,11 +256,18 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 			return nil
 		}
 
-		// If a fsGroup is defined, Chown all files in the timestamped directory.
+		// Change ownership of the data directory, the timestamp directory and all files within it.
+		paths := []string{
+			f.dataPathForVolumeID(meta.VolumeID),
+			filepath.Join(f.dataPathForVolumeID(meta.VolumeID), tsDirName),
+		}
 		for filename := range files {
-			// Set the uid to -1 which means don't change ownership in Go.
-			if err := os.Chown(filepath.Join(tsDirName, filename), -1, int(*fsGroup)); err != nil {
-				return err
+			paths = append(paths, filepath.Join(f.dataPathForVolumeID(meta.VolumeID), tsDirName, filename))
+		}
+
+		for _, path := range paths {
+			if err := os.Lchown(path, -1, int(*fsGroup)); err != nil {
+				return fmt.Errorf("failed to chown data dir to gid %v: %w", *fsGroup, err)
 			}
 		}
 
