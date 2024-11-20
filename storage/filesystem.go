@@ -266,7 +266,7 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		// If a fsGroup is defined, Chown all files in the timestamped directory.
 		for filename := range files {
 			// Set the uid to -1 which means don't change ownership in Go.
-			if err := os.Chown(filepath.Join(tsDirName, filename), -1, int(*fsGroup)); err != nil {
+			if err := os.Chown(filepath.Join(f.dataPathForVolumeID(meta.VolumeID), tsDirName, filename), -1, int(*fsGroup)); err != nil {
 				return err
 			}
 		}
