@@ -34,6 +34,14 @@ import (
 	"github.com/cert-manager/csi-lib/third_party/util"
 )
 
+// These variables can be overridden by tests, this makes it easier to test
+// the filesystem implementation as a non-root user.
+var (
+	parentFolderMode     fs.FileMode = 0700
+	volumeFolderMode     fs.FileMode = 0644
+	volumeDataFolderMode fs.FileMode = 0550
+)
+
 const (
 	readWriteUserFileMode        = 0600
 	readOnlyUserAndGroupFileMode = 0440
@@ -42,12 +50,9 @@ const (
 type Filesystem struct {
 	log logr.Logger
 
-	// baseDir is the absolute path to a directory used to store all metadata
+	// basePath is the absolute path to a directory used to store all metadata
 	// about mounted volumes and mount points.
-	baseDir string
-
-	// used by the 'read only' methods
-	fs fs.StatFS
+	basePath string
 
 	// FixedFSGroup is an optional field which will set the gid ownership of all
 	// volume's data directories to this value.
@@ -65,30 +70,44 @@ type Filesystem struct {
 // Ensure the Filesystem implementation is fully featured
 var _ Interface = &Filesystem{}
 
-func NewFilesystem(log logr.Logger, baseDir string) (*Filesystem, error) {
-	f := &Filesystem{
-		log:     log,
-		baseDir: baseDir,
-		// Use the rootfs as the DirFS so that paths passed to both read &
-		// write methods on this struct use a consistent root.
-		fs: os.DirFS("/").(fs.StatFS),
+func NewFilesystem(log logr.Logger, basePath string) (*Filesystem, error) {
+	inmemfsPath := filepath.Join(basePath, "inmemfs")
+
+	f, err := NewFilesystemOnDisk(log, inmemfsPath)
+	if err != nil {
+		return nil, err
 	}
 
-	isMnt, err := mount.New("").IsMountPoint(f.tempfsPath())
+	isMnt, err := mount.New("").IsMountPoint(inmemfsPath)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-		if err := os.MkdirAll(f.tempfsPath(), 0700); err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 
 	if !isMnt {
-		if err := mount.New("").Mount("tmpfs", f.tempfsPath(), "tmpfs", []string{}); err != nil {
+		if err := mount.New("").Mount("tmpfs", inmemfsPath, "tmpfs", []string{}); err != nil {
 			return nil, fmt.Errorf("mounting tmpfs: %w", err)
 		}
-		log.Info("Mounted new tmpfs", "path", f.tempfsPath())
+		log.Info("Mounted new tmpfs", "path", inmemfsPath)
+	}
+
+	return f, nil
+}
+
+// WARNING: should be used only for testing purposes only, as we don't want to store
+// any sensitive data on disk in production.
+func NewFilesystemOnDisk(log logr.Logger, basePath string) (*Filesystem, error) {
+	if !filepath.IsAbs(basePath) {
+		return nil, fmt.Errorf("baseDir must be an absolute path")
+	}
+
+	f := &Filesystem{
+		log:      log,
+		basePath: basePath,
+	}
+
+	// Create the base directory if it does not exist.
+	if err := os.MkdirAll(basePath, parentFolderMode); err != nil {
+		return nil, err
 	}
 
 	return f, nil
@@ -99,18 +118,18 @@ func (f *Filesystem) PathForVolume(volumeID string) string {
 }
 
 func (f *Filesystem) RemoveVolume(volumeID string) error {
-	return os.RemoveAll(filepath.Join(f.tempfsPath(), volumeID))
+	return os.RemoveAll(f.volumePath(volumeID))
 }
 
 func (f *Filesystem) ListVolumes() ([]string, error) {
-	dirs, err := fs.ReadDir(f.fs, f.tempfsPath())
+	dirs, err := os.ReadDir(f.basePath)
 	if err != nil {
 		return nil, fmt.Errorf("listing volumes: %w", err)
 	}
 
 	var vols []string
 	for _, dir := range dirs {
-		_, err := f.fs.Stat(f.metadataPathForVolumeID(dir.Name()))
+		_, err := os.Stat(f.metadataPathForVolumeID(dir.Name()))
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			f.log.Info("Directory exists but does not contain a metadata file - deleting directory and its contents", "volume_id", dir.Name())
@@ -133,7 +152,7 @@ func (f *Filesystem) ListVolumes() ([]string, error) {
 // Errors wrapping ErrNotFound will be returned if metadata for the ID cannot
 // be found.
 func (f *Filesystem) ReadMetadata(volumeID string) (metadata.Metadata, error) {
-	file, err := f.fs.Open(f.metadataPathForVolumeID(volumeID))
+	file, err := os.Open(f.metadataPathForVolumeID(volumeID))
 	if err != nil {
 		// don't leak through error types from fs.Open - wrap with ErrNotFound
 		// if calling Open fails, as this indicates an invalid path
@@ -164,6 +183,11 @@ func (f *Filesystem) ReadMetadata(volumeID string) (metadata.Metadata, error) {
 }
 
 func (f *Filesystem) WriteMetadata(volumeID string, meta metadata.Metadata) error {
+	// Ensure the the volume directory exists.
+	if err := f.ensureVolumeDirectory(volumeID); err != nil {
+		return err
+	}
+
 	metaBytes, err := json.Marshal(meta)
 	if err != nil {
 		// if it's an error type we don't recognise, wrap it with %v to prevent
@@ -177,11 +201,6 @@ func (f *Filesystem) WriteMetadata(volumeID string, meta metadata.Metadata) erro
 func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 	existingMeta, err := f.ReadMetadata(meta.VolumeID)
 	if errors.Is(err, ErrNotFound) {
-		// Ensure directory structure for the volume exists
-		if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
-			return false, err
-		}
-
 		if err := f.WriteMetadata(meta.VolumeID, meta); err != nil {
 			return false, err
 		}
@@ -191,13 +210,6 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 
 	// If the volume context has changed, should write updated metadata
 	if !apiequality.Semantic.DeepEqual(existingMeta.VolumeContext, meta.VolumeContext) {
-		// Ensure directory structure for the volume exists - this will probably do
-		// nothing, but it helps avoid any weird edge cases we could find ourselves in &
-		// is an inexpensive operation.
-		if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
-			return false, err
-		}
-
 		f.log.WithValues("volume_id", meta.VolumeID).Info("volume context changed, updating file system metadata")
 		existingMeta.VolumeContext = meta.VolumeContext
 		if err := f.WriteMetadata(existingMeta.VolumeID, existingMeta); err != nil {
@@ -213,29 +225,14 @@ func (f *Filesystem) RegisterMetadata(meta metadata.Metadata) (bool, error) {
 // ensureVolumeDirectory ensures the directory structure for the volume exists.
 // If the directories already exist, it will do nothing.
 func (f *Filesystem) ensureVolumeDirectory(volumeID string) error {
-	if err := os.MkdirAll(f.volumePath(volumeID), 0644); err != nil {
-		return err
-	}
-
-	// Data directory should be read and execute only to the fs user and group.
-	if err := os.MkdirAll(f.dataPathForVolumeID(volumeID), 0550); err != nil {
-		return err
-	}
-
-	return nil
+	return os.MkdirAll(f.volumePath(volumeID), volumeFolderMode)
 }
 
 // WriteFiles writes the given data to filesystem files within the volume's
 // data directory. Filesystem supports changing ownership of the data directory
 // to a custom gid.
 func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte) error {
-	// Ensure the full directory structure for the volume exists.
-	// This already happens in RegisterMetadata, however, when a driver starts up and reads
-	// the metadata files from the existing tmpfs to re-populate the manager, RegisterMetadata
-	// is not called again (it is only invoked by driver/nodeserver.go when a pod is first processed
-	// during NodePublishVolume).
-	// There is a very slim chance we could end out in a weird situation where the metadata
-	// file exists but the data directory does not, so re-run ensureVolumeDirectory just to be safe.
+	// Ensure the the volume directory exists.
 	if err := f.ensureVolumeDirectory(meta.VolumeID); err != nil {
 		return err
 	}
@@ -245,9 +242,14 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		return err
 	}
 
+	// Data directory should be read and execute only to the fs user and group.
+	if err := os.MkdirAll(f.dataPathForVolumeID(meta.VolumeID), volumeDataFolderMode); err != nil {
+		return err
+	}
+
 	// If a fsGroup is defined, Chown the directory to that group.
 	if fsGroup != nil {
-		if err := os.Chown(f.dataPathForVolumeID(meta.VolumeID), -1, int(*fsGroup)); err != nil {
+		if err := os.Lchown(f.dataPathForVolumeID(meta.VolumeID), -1, int(*fsGroup)); err != nil {
 			return fmt.Errorf("failed to chown data dir to gid %v: %w", *fsGroup, err)
 		}
 	}
@@ -266,7 +268,7 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 		// If a fsGroup is defined, Chown all files in the timestamped directory.
 		for filename := range files {
 			// Set the uid to -1 which means don't change ownership in Go.
-			if err := os.Chown(filepath.Join(f.dataPathForVolumeID(meta.VolumeID), tsDirName, filename), -1, int(*fsGroup)); err != nil {
+			if err := os.Lchown(filepath.Join(f.dataPathForVolumeID(meta.VolumeID), tsDirName, filename), -1, int(*fsGroup)); err != nil {
 				return err
 			}
 		}
@@ -282,7 +284,7 @@ func (f *Filesystem) WriteFiles(meta metadata.Metadata, files map[string][]byte)
 
 // ReadFile reads the named file within the volume's data directory.
 func (f *Filesystem) ReadFile(volumeID, name string) ([]byte, error) {
-	file, err := f.fs.Open(filepath.Join(f.dataPathForVolumeID(volumeID), name))
+	file, err := os.Open(filepath.Join(f.dataPathForVolumeID(volumeID), name))
 	if err != nil {
 		// don't leak through error types from fs.Open - wrap with ErrNotFound
 		// if calling Open fails, as this indicates an invalid path
@@ -306,11 +308,7 @@ func (f *Filesystem) dataPathForVolumeID(id string) string {
 }
 
 func (f *Filesystem) volumePath(id string) string {
-	return filepath.Join(f.tempfsPath(), id)
-}
-
-func (f *Filesystem) tempfsPath() string {
-	return filepath.Join(f.baseDir, "inmemfs")
+	return filepath.Join(f.basePath, id)
 }
 
 func makePayload(in map[string][]byte) map[string]util.FileProjection {
