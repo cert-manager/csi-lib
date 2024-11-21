@@ -333,14 +333,20 @@ func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) 
 		return f.FixedFSGroup, nil
 	}
 
+	// The VolumeAttribute takes precedence over the VolumeMountGroup that is
+	// set using the securityContext.fsGroup field. This way, we can support more
+	// granular control over the fsGroup per volume.
+	fsGroupStr := ""
 	// If the FSGroupVolumeAttributeKey is not defined, no ownership can change.
-	if len(f.FSGroupVolumeAttributeKey) == 0 {
-		return nil, nil
+	if fsGroupStr == "" && len(f.FSGroupVolumeAttributeKey) > 0 {
+		fsGroupStr = meta.VolumeContext[f.FSGroupVolumeAttributeKey]
+	}
+	if fsGroupStr == "" {
+		fsGroupStr = meta.VolumeMountGroup
 	}
 
-	fsGroupStr, ok := meta.VolumeContext[f.FSGroupVolumeAttributeKey]
-	if !ok {
-		// If the attribute has not been set, return no ownership change.
+	// If the attribute has not been set, return no ownership change.
+	if fsGroupStr == "" {
 		return nil, nil
 	}
 
