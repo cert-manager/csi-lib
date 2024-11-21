@@ -49,16 +49,10 @@ type Filesystem struct {
 	// used by the 'read only' methods
 	fs fs.StatFS
 
-	// FixedFSGroup is an optional field which will set the gid ownership of all
-	// volume's data directories to this value.
-	// If this value is set, FSGroupVolumeAttributeKey has no effect.
-	FixedFSGroup *int64
-
 	// FSGroupVolumeAttributeKey is an optional well-known key in the volume
 	// attributes. If this attribute is present in the context when writing
 	// files, gid ownership of the volume's data directory will be changed to
 	// the value. Attribute value must be a valid int64 value.
-	// If FixedFSGroup is defined, this field has no effect.
 	FSGroupVolumeAttributeKey string
 }
 
@@ -328,11 +322,6 @@ func makePayload(in map[string][]byte) map[string]util.FileProjection {
 // directory should be changed to. Returns nil if ownership should not be
 // changed.
 func (f *Filesystem) fsGroupForMetadata(meta metadata.Metadata) (*int64, error) {
-	// FixedFSGroup takes precedence over attribute key.
-	if f.FixedFSGroup != nil {
-		return f.FixedFSGroup, nil
-	}
-
 	// The VolumeAttribute takes precedence over the VolumeMountGroup that is
 	// set using the securityContext.fsGroup field. This way, we can support more
 	// granular control over the fsGroup per volume.
