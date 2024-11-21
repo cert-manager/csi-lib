@@ -198,7 +198,7 @@ func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, request *csi.Node
 			{
 				Type: &csi.NodeServiceCapability_Rpc{
 					Rpc: &csi.NodeServiceCapability_RPC{
-						Type: csi.NodeServiceCapability_RPC_UNKNOWN,
+						Type: csi.NodeServiceCapability_RPC_VOLUME_MOUNT_GROUP,
 					},
 				},
 			},

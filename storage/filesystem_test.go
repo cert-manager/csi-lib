@@ -143,36 +143,43 @@ func Test_fsGroupForMetadata(t *testing.T) {
 	}
 
 	tests := map[string]struct {
-		fixedFSGroup              *int64
+		metaVolumeMountGroup      string
 		fsGroupVolumeAttributeKey string
 		volumeContext             map[string]string
 
 		expGID *int64
 		expErr bool
 	}{
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey='', should return nil gid": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey='', should return nil gid": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "",
 			volumeContext:             map[string]string{},
 			expGID:                    nil,
 			expErr:                    false,
 		},
-		"FixedFSGroup=10 FSGroupVolumeAttributeKey='', should return 10": {
-			fixedFSGroup:              intPtr(10),
+		"meta.VolumeMountGroup='70' FSGroupVolumeAttributeKey='', should return 70": {
+			metaVolumeMountGroup:      "70",
 			fsGroupVolumeAttributeKey: "",
 			volumeContext:             map[string]string{},
-			expGID:                    intPtr(10),
+			expGID:                    intPtr(70),
 			expErr:                    false,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined but not present in context, should return nil": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined but not present in context, should return nil": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext:             map[string]string{},
 			expGID:                    nil,
 			expErr:                    false,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context, should return 20": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='70' FSGroupVolumeAttributeKey=defined but not present in context, should return 70": {
+			metaVolumeMountGroup:      "70",
+			fsGroupVolumeAttributeKey: "fs-gid",
+			volumeContext:             map[string]string{},
+			expGID:                    intPtr(70),
+			expErr:                    false,
+		},
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined and present in context, should return 20": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext: map[string]string{
 				"fs-gid": "20",
@@ -180,8 +187,17 @@ func Test_fsGroupForMetadata(t *testing.T) {
 			expGID: intPtr(20),
 			expErr: false,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context but value of 0, should error": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='10' FSGroupVolumeAttributeKey=defined and present in context, should return 20": {
+			metaVolumeMountGroup:      "10",
+			fsGroupVolumeAttributeKey: "fs-gid",
+			volumeContext: map[string]string{
+				"fs-gid": "20",
+			},
+			expGID: intPtr(20),
+			expErr: false,
+		},
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined and present in context but value of 0, should error": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext: map[string]string{
 				"fs-gid": "0",
@@ -189,8 +205,8 @@ func Test_fsGroupForMetadata(t *testing.T) {
 			expGID: nil,
 			expErr: true,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context but value of -1, should error": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined and present in context but value of -1, should error": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext: map[string]string{
 				"fs-gid": "-1",
@@ -198,8 +214,8 @@ func Test_fsGroupForMetadata(t *testing.T) {
 			expGID: nil,
 			expErr: true,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context but value greater than the max gid, should error": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined and present in context but value greater than the max gid, should error": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext: map[string]string{
 				"fs-gid": "4294967296",
@@ -207,8 +223,8 @@ func Test_fsGroupForMetadata(t *testing.T) {
 			expGID: nil,
 			expErr: true,
 		},
-		"FixedFSGroup=nil FSGroupVolumeAttributeKey=defined and present in context but with bad value, should return error": {
-			fixedFSGroup:              nil,
+		"meta.VolumeMountGroup='' FSGroupVolumeAttributeKey=defined and present in context but with bad value, should return error": {
+			metaVolumeMountGroup:      "",
 			fsGroupVolumeAttributeKey: "fs-gid",
 			volumeContext: map[string]string{
 				"fs-gid": "bad-value",
@@ -216,26 +232,17 @@ func Test_fsGroupForMetadata(t *testing.T) {
 			expGID: nil,
 			expErr: true,
 		},
-		"FixedFSGroup=10 FSGroupVolumeAttributeKey=defined and present in context, should return superseding FixedFSGroup (10)": {
-			fixedFSGroup:              intPtr(10),
-			fsGroupVolumeAttributeKey: "fs-gid",
-			volumeContext: map[string]string{
-				"fs-gid": "20",
-			},
-			expGID: intPtr(10),
-			expErr: false,
-		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			f := Filesystem{
-				FixedFSGroup:              test.fixedFSGroup,
 				FSGroupVolumeAttributeKey: test.fsGroupVolumeAttributeKey,
 			}
 
 			gid, err := f.fsGroupForMetadata(metadata.Metadata{
-				VolumeContext: test.volumeContext,
+				VolumeContext:    test.volumeContext,
+				VolumeMountGroup: test.metaVolumeMountGroup,
 			})
 
 			if (err != nil) != test.expErr {
