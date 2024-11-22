@@ -7,6 +7,7 @@ require (
 	github.com/container-storage-interface/spec v1.10.0
 	github.com/go-logr/logr v1.4.2
 	github.com/kubernetes-csi/csi-lib-utils v0.19.0
+	github.com/prometheus/client_golang v1.20.4
 	github.com/stretchr/testify v1.9.0
 	google.golang.org/grpc v1.66.2
 	k8s.io/apimachinery v0.31.1
@@ -39,6 +40,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/moby/sys/mountinfo v0.7.2 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
@@ -48,7 +50,6 @@ require (
 	github.com/opencontainers/runtime-spec v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/prometheus/client_golang v1.20.4 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.59.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
