@@ -36,6 +36,7 @@ import (
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
 )
 
@@ -45,6 +46,7 @@ type Options struct {
 	Log     *logr.Logger
 	Client  cmclient.Interface
 	Mounter mount.Interface
+	Metrics *metrics.Metrics
 
 	NodeID               string
 	MaxRequestsPerVolume int
@@ -110,6 +112,7 @@ func Run(t *testing.T, opts Options) (Options, csi.NodeClient, func()) {
 		Clock:                opts.Clock,
 		Log:                  opts.Log,
 		NodeID:               opts.NodeID,
+		Metrics:              opts.Metrics,
 		MaxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		GeneratePrivateKey:   opts.GeneratePrivateKey,
 		GenerateRequest:      opts.GenerateRequest,

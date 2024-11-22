@@ -47,6 +47,7 @@ import (
 	internalapi "github.com/cert-manager/csi-lib/internal/api"
 	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
 )
 
@@ -89,6 +90,9 @@ type Options struct {
 
 	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
 	RenewalBackoffConfig *wait.Backoff
+
+	// Metrics is used for exposing Prometheus metrics
+	Metrics *metrics.Metrics
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -125,6 +129,9 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	if opts.Log == nil {
 		return nil, errors.New("log must be set")
+	}
+	if opts.Metrics == nil {
+		opts.Metrics = metrics.New(opts.Log)
 	}
 	if opts.MetadataReader == nil {
 		return nil, errors.New("MetadataReader must be set")
@@ -241,6 +248,7 @@ func NewManager(opts Options) (*Manager, error) {
 		metadataReader:          opts.MetadataReader,
 		clock:                   opts.Clock,
 		log:                     *opts.Log,
+		metrics:                 opts.Metrics,
 
 		generatePrivateKey: opts.GeneratePrivateKey,
 		generateRequest:    opts.GenerateRequest,
@@ -375,6 +383,9 @@ type Manager struct {
 	// No thread safety is added around this field, and it MUST NOT be used for any implementation logic.
 	// It should not be used full-stop :).
 	doNotUse_CallOnEachIssue func()
+
+	// metrics is used to expose Prometheus
+	metrics *metrics.Metrics
 }
 
 // issue will step through the entire issuance flow for a volume.
@@ -386,6 +397,9 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
+
+	// Increase issue count
+	m.metrics.IncrementIssueCallCount(m.nodeNameHash, volumeID)
 
 	if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 		return fmt.Errorf("cleaning up stale requests: %w", err)
@@ -594,7 +608,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 	// Calculate the default next issuance time.
 	// The implementation's writeKeypair function may override this value before
 	// writing to the storage layer.
-	renewalPoint, err := calculateNextIssuanceTime(req.Status.Certificate)
+	expiryPoint, renewalPoint, err := getExpiryAndDefaultNextIssuanceTime(req.Status.Certificate)
 	if err != nil {
 		return fmt.Errorf("calculating next issuance time: %w", err)
 	}
@@ -605,6 +619,10 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		return fmt.Errorf("writing keypair: %w", err)
 	}
 	log.V(2).Info("Wrote new keypair to storage")
+
+	// Update the request metrics.
+	// Using meta.NextIssuanceTime instead of renewalPoint here, in case writeKeypair overrides the value.
+	m.metrics.UpdateCertificateRequest(req, expiryPoint, *meta.NextIssuanceTime)
 
 	// We must explicitly delete the private key from the pending requests map so that the existing Completed
 	// request will not be re-used upon renewal.
@@ -656,6 +674,9 @@ func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, vol
 				return fmt.Errorf("deleting old certificaterequest: %w", err)
 			}
 		}
+
+		// Remove the CertificateRequest from the metrics.
+		m.metrics.RemoveCertificateRequest(toDelete.Name, toDelete.Namespace)
 
 		log.Info("Deleted CertificateRequest resource", "name", toDelete.Name, "namespace", toDelete.Namespace)
 	}
@@ -756,6 +777,8 @@ func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (m
 		// If issuance fails, immediately return without retrying so the caller can decide
 		// how to proceed depending on the context this method was called within.
 		if err := m.issue(ctx, volumeID); err != nil {
+			// Increase issue error count
+			m.metrics.IncrementIssueErrorCount(m.nodeNameHash, volumeID)
 			return true, err
 		}
 	}
@@ -783,6 +806,8 @@ func (m *Manager) manageVolumeIfNotManaged(volumeID string) (managed bool) {
 	// construct a new channel used to stop management of the volume
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
+	// Increase managed volume count for this driver
+	m.metrics.IncrementManagedVolumeCount(m.nodeNameHash)
 
 	return true
 }
@@ -799,6 +824,10 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 		log.Info("Volume not registered for management, cannot start renewal routine...")
 		return false
 	}
+
+	// Increase managed certificate count for this driver.
+	// We assume each volume will have one certificate to be managed.
+	m.metrics.IncrementManagedCertificateCount(m.nodeNameHash)
 
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -835,6 +864,8 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 						defer issueCancel()
 						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
+							// Increase issue error count
+							m.metrics.IncrementIssueErrorCount(m.nodeNameHash, volumeID)
 							return false, nil
 						}
 						return true, nil
@@ -874,6 +905,14 @@ func (m *Manager) UnmanageVolume(volumeID string) {
 	if stopCh, ok := m.managedVolumes[volumeID]; ok {
 		close(stopCh)
 		delete(m.managedVolumes, volumeID)
+		if reqs, err := m.listAllRequestsForVolume(volumeID); err == nil {
+			// Remove the CertificateRequest from the metrics with the best effort.
+			for _, req := range reqs {
+				if req != nil {
+					m.metrics.RemoveCertificateRequest(req.Name, req.Namespace)
+				}
+			}
+		}
 	}
 }
 
@@ -919,19 +958,19 @@ func (m *Manager) Stop() {
 	}
 }
 
-// calculateNextIssuanceTime will return the default time at which the certificate
-// should be renewed by the driver- 2/3rds through its lifetime (NotAfter -
-// NotBefore).
-func calculateNextIssuanceTime(chain []byte) (time.Time, error) {
+// getExpiryAndDefaultNextIssuanceTime will return the certificate expiry time, together with
+// default time at which the certificate should be renewed by the driver- 2/3rds through its
+// lifetime (NotAfter - NotBefore).
+func getExpiryAndDefaultNextIssuanceTime(chain []byte) (time.Time, time.Time, error) {
 	block, _ := pem.Decode(chain)
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
+		return time.Time{}, time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
 	}
 
 	actualDuration := crt.NotAfter.Sub(crt.NotBefore)
 
 	renewBeforeNotAfter := actualDuration / 3
 
-	return crt.NotAfter.Add(-renewBeforeNotAfter), nil
+	return crt.NotAfter, crt.NotAfter.Add(-renewBeforeNotAfter), nil
 }
