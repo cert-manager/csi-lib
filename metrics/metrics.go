@@ -17,23 +17,17 @@ limitations under the License.
 package metrics
 
 import (
-	"net"
 	"net/http"
-	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
 	// Namespace is the namespace for csi-lib metric names
-	namespace                             = "certmanager"
-	subsystem                             = "csi"
-	prometheusMetricsServerReadTimeout    = 8 * time.Second
-	prometheusMetricsServerWriteTimeout   = 8 * time.Second
-	prometheusMetricsServerMaxHeaderBytes = 1 << 20 // 1 MiB
+	namespace = "certmanager"
+	subsystem = "csi"
 )
 
 // Metrics is designed to be a shared object for updating the metrics exposed by csi-lib
@@ -51,7 +45,7 @@ type Metrics struct {
 }
 
 // New creates a Metrics struct and populates it with prometheus metric types.
-func New(logger *logr.Logger) *Metrics {
+func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
 	var (
 		certificateRequestExpiryTimeSeconds = prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -124,12 +118,6 @@ func New(logger *logr.Logger) *Metrics {
 		)
 	)
 
-	// Create Registry and register the recommended collectors
-	registry := prometheus.NewRegistry()
-	registry.MustRegister(
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-		collectors.NewGoCollector(),
-	)
 	// Create server and register Prometheus metrics handler
 	m := &Metrics{
 		log:      logger.WithName("metrics"),
@@ -144,11 +132,6 @@ func New(logger *logr.Logger) *Metrics {
 		managedCertificateCount:              managedCertificateCount,
 	}
 
-	return m
-}
-
-// NewServer registers Prometheus metrics and returns a new Prometheus metrics HTTP server.
-func (m *Metrics) NewServer(ln net.Listener) *http.Server {
 	m.registry.MustRegister(m.certificateRequestExpiryTimeSeconds)
 	m.registry.MustRegister(m.certificateRequestRenewalTimeSeconds)
 	m.registry.MustRegister(m.certificateRequestReadyStatus)
@@ -157,18 +140,15 @@ func (m *Metrics) NewServer(ln net.Listener) *http.Server {
 	m.registry.MustRegister(m.managedVolumeCount)
 	m.registry.MustRegister(m.managedCertificateCount)
 
+	return m
+}
+
+// DefaultHandler returns a default prometheus metrics HTTP handler
+func (m *Metrics) DefaultHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{}))
 
-	server := &http.Server{
-		Addr:           ln.Addr().String(),
-		ReadTimeout:    prometheusMetricsServerReadTimeout,
-		WriteTimeout:   prometheusMetricsServerWriteTimeout,
-		MaxHeaderBytes: prometheusMetricsServerMaxHeaderBytes,
-		Handler:        mux,
-	}
-
-	return server
+	return mux
 }
 
 // IncrementIssueCallCount will increase the issue call counter for the driver.

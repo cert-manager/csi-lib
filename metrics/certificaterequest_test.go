@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr/testr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -188,7 +189,7 @@ func TestCertificateRequestMetrics(t *testing.T) {
 	for n, test := range tests {
 		t.Run(n, func(t *testing.T) {
 			testLog := testr.New(t)
-			m := New(&testLog)
+			m := New(&testLog, prometheus.NewRegistry())
 			m.UpdateCertificateRequest(test.cr, test.notAfter, test.renewBefore)
 
 			if err := testutil.CollectAndCompare(m.certificateRequestExpiryTimeSeconds,
@@ -217,7 +218,7 @@ func TestCertificateRequestMetrics(t *testing.T) {
 
 func TestCertificateRequestCache(t *testing.T) {
 	testLog := testr.New(t)
-	m := New(&testLog)
+	m := New(&testLog, prometheus.NewRegistry())
 
 	// private key to be used to generate X509 certificate
 	privKey := testcrypto.MustCreatePEMPrivateKey(t)

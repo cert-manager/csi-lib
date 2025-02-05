@@ -34,6 +34,7 @@ import (
 	cminformers "github.com/cert-manager/cert-manager/pkg/client/informers/externalversions"
 	cmlisters "github.com/cert-manager/cert-manager/pkg/client/listers/certmanager/v1"
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -131,7 +132,7 @@ func NewManager(opts Options) (*Manager, error) {
 		return nil, errors.New("log must be set")
 	}
 	if opts.Metrics == nil {
-		opts.Metrics = metrics.New(opts.Log)
+		opts.Metrics = metrics.New(opts.Log, prometheus.NewRegistry())
 	}
 	if opts.MetadataReader == nil {
 		return nil, errors.New("MetadataReader must be set")

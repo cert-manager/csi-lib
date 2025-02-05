@@ -15,6 +15,7 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr/testr"
+	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	fakeclock "k8s.io/utils/clock/testing"
@@ -80,12 +81,19 @@ func TestMetricsServer(t *testing.T) {
 	testNamespace := "test-ns"
 
 	// Build metrics handler, and start metrics server with a random available port
-	metricsHandler := metrics.New(&testLog)
+	metricsHandler := metrics.New(&testLog, prometheus.NewRegistry())
 	metricsLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	metricsServer := metricsHandler.NewServer(metricsLn)
+	metricsServer := &http.Server{
+		Addr:           metricsLn.Addr().String(),
+		ReadTimeout:    8 * time.Second,
+		WriteTimeout:   8 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MiB
+		Handler:        metricsHandler.DefaultHandler(),
+	}
+
 	errCh := make(chan error)
 	go func() {
 		defer close(errCh)
