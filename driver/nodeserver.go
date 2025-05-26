@@ -149,14 +149,6 @@ func loggerForMetadata(log logr.Logger, meta metadata.Metadata) logr.Logger {
 	return log.WithValues("pod_name", meta.VolumeContext["csi.storage.k8s.io/pod.name"])
 }
 
-func (ns *nodeServer) NodeStageVolume(ctx context.Context, request *csi.NodeStageVolumeRequest) (*csi.NodeStageVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NodeStageVolume not implemented")
-}
-
-func (ns *nodeServer) NodeUnstageVolume(ctx context.Context, request *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NodeUnstageVolume not implemented")
-}
-
 func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	log := ns.log.WithValues("volume_id", request.VolumeId, "target_path", request.TargetPath)
 	ns.manager.UnmanageVolume(request.GetVolumeId())
@@ -184,14 +176,7 @@ func (ns *nodeServer) NodeUnpublishVolume(ctx context.Context, request *csi.Node
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
-func (ns *nodeServer) NodeGetVolumeStats(ctx context.Context, request *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NodeGetVolumeStats not implemented")
-}
-
-func (ns *nodeServer) NodeExpandVolume(ctx context.Context, request *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "NodeExpandVolume not implemented")
-}
-
+// Advertise the VOLUME_MOUNT_GROUP capability, indicating that we can handle the securityContext.fsGroup option.
 func (ns *nodeServer) NodeGetCapabilities(ctx context.Context, request *csi.NodeGetCapabilitiesRequest) (*csi.NodeGetCapabilitiesResponse, error) {
 	return &csi.NodeGetCapabilitiesResponse{
 		Capabilities: []*csi.NodeServiceCapability{
