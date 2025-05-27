@@ -38,14 +38,18 @@ type Metadata struct {
 	// System-specific attributes extracted from the NodePublishVolume request.
 	// These are sourced from the VolumeContext.
 	VolumeContext map[string]string `json:"volumeContext,omitempty"`
+
+	// VolumeMountGroup is the filesystem group that the volume should be mounted as.
+	VolumeMountGroup string `json:"volumeMountGroup,omitempty"`
 }
 
 // FromNodePublishVolumeRequest constructs a Metadata from a NodePublishVolumeRequest.
 // The NextIssuanceTime field will NOT be set.
 func FromNodePublishVolumeRequest(request *csi.NodePublishVolumeRequest) Metadata {
 	return Metadata{
-		VolumeID:      request.GetVolumeId(),
-		TargetPath:    request.GetTargetPath(),
-		VolumeContext: request.GetVolumeContext(),
+		VolumeID:         request.GetVolumeId(),
+		TargetPath:       request.GetTargetPath(),
+		VolumeContext:    request.GetVolumeContext(),
+		VolumeMountGroup: request.GetVolumeCapability().GetMount().GetVolumeMountGroup(),
 	}
 }
