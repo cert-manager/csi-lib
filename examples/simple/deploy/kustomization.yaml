@@ -1,0 +1,3 @@
+resources:
+- 01_simple-csi-driver.yaml
+- 02_example-app.yaml

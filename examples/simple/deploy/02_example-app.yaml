@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sandbox
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: sandbox
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ca-issuer
+  namespace: sandbox
+spec:
+  isCA: true
+  secretName: ca-key-pair
+  commonName: my-csi-app
+  issuerRef:
+    name: selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ca-issuer
+  namespace: sandbox
+spec:
+  ca:
+    secretName: ca-key-pair
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: my-csi-job
+  namespace: sandbox
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsGroup: 1000
+        runAsUser: 2000
+      containers:
+        - name: my-frontend
+          image: busybox:1.35.0
+          volumeMounts:
+          - mountPath: "/tls"
+            name: tls
+          command: [ "cat", "/tls/tls.crt" ]
+      volumes:
+        - name: tls
+          csi:
+            driver: csi.cert-manager.io
+            readOnly: true
+            volumeAttributes:
+              csi.cert-manager.io/issuer-name: ca-issuer
+              csi.cert-manager.io/dns-names: my-service.sandbox.svc.cluster.local
+              csi.cert-manager.io/uri-sans: spiffe://my-service.sandbox.cluster.local
+              csi.cert-manager.io/fs-group: "1000"
