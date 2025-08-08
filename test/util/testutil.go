@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-func waitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmclient.Interface, ns string) (*cmapi.CertificateRequest, error) {
+func WaitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmclient.Interface, ns string) (*cmapi.CertificateRequest, error) {
 	var req *cmapi.CertificateRequest
 	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (done bool, err error) {
 		reqs, err := client.CertmanagerV1().CertificateRequests(ns).List(ctx, metav1.ListOptions{})
@@ -53,7 +53,7 @@ func waitAndGetOneCertificateRequestInNamespace(ctx context.Context, client cmcl
 
 func IssueOneRequest(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, cert, ca []byte) {
 	if err := func() error {
-		req, err := waitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
+		req, err := WaitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
 		if err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func IssueOneRequest(ctx context.Context, t *testing.T, client cmclient.Interfac
 
 func SetCertificateRequestConditions(ctx context.Context, t *testing.T, client cmclient.Interface, namespace string, conditions ...cmapi.CertificateRequestCondition) {
 	if err := func() error {
-		req, err := waitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
+		req, err := WaitAndGetOneCertificateRequestInNamespace(ctx, client, namespace)
 		if err != nil {
 			return err
 		}
