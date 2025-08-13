@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -103,7 +104,7 @@ func main() {
 
 	store.FSGroupVolumeAttributeKey = FsGroupKey
 
-	d, err := driver.New(*endpoint, log, driver.Options{
+	d, err := driver.New(context.Background(), *endpoint, log, driver.Options{
 		DriverName:    "csi.cert-manager.io",
 		DriverVersion: "v0.0.1",
 		NodeID:        *nodeID,

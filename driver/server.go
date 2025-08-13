@@ -34,7 +34,7 @@ type GRPCServer struct {
 	lis    net.Listener
 }
 
-func NewGRPCServer(endpoint string, log logr.Logger, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) (*GRPCServer, error) {
+func NewGRPCServer(ctx context.Context, endpoint string, log logr.Logger, ids csi.IdentityServer, cs csi.ControllerServer, ns csi.NodeServer) (*GRPCServer, error) {
 	proto, addr, err := parseEndpoint(endpoint)
 	if err != nil {
 		return nil, err
@@ -47,7 +47,8 @@ func NewGRPCServer(endpoint string, log logr.Logger, ids csi.IdentityServer, cs 
 		}
 	}
 
-	listener, err := net.Listen(proto, addr)
+	lc := net.ListenConfig{}
+	listener, err := lc.Listen(ctx, proto, addr)
 	if err != nil {
 		return nil, err
 	}

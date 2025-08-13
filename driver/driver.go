@@ -17,6 +17,7 @@ limitations under the License.
 package driver
 
 import (
+	"context"
 	"net"
 
 	"github.com/go-logr/logr"
@@ -64,9 +65,9 @@ type Options struct {
 	ContinueOnNotReady bool
 }
 
-func New(endpoint string, log logr.Logger, opts Options) (*Driver, error) {
+func New(ctx context.Context, endpoint string, log logr.Logger, opts Options) (*Driver, error) {
 	ids, cs, ns := buildServers(opts, log)
-	server, err := NewGRPCServer(endpoint, log, ids, cs, ns)
+	server, err := NewGRPCServer(ctx, endpoint, log, ids, cs, ns)
 	if err != nil {
 		return nil, err
 	}

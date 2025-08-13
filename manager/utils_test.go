@@ -23,11 +23,10 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/utils/clock"
-
 	cmfake "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
 	"github.com/go-logr/logr/testr"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/utils/clock"
 	fakeclock "k8s.io/utils/clock/testing"
 
 	"github.com/cert-manager/csi-lib/metadata"
