@@ -30,5 +30,3 @@ deploy_name := csi-lib
 deploy_namespace := cert-manager
 
 golangci_lint_config := .golangci.yaml
-
-repository_base_no_dependabot := 1
