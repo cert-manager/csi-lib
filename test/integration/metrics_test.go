@@ -98,7 +98,9 @@ func TestMetricsServer(t *testing.T) {
 
 	// Build metrics handler, and start metrics server with a random available port
 	metricsHandler := metrics.New(&testLog, prometheus.NewRegistry())
-	metricsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	// listenConfig
+	listenConfig := &net.ListenConfig{}
+	metricsLn, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
