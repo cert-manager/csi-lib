@@ -1,3 +1,19 @@
+/*
+Copyright 2025 The cert-manager Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package integration
 
 import (
@@ -207,15 +223,15 @@ certmanager_csi_certificate_request_ready_status{condition="Unknown",issuer_grou
 # HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The number of seconds before expiration time the certificate request should renew.
 # TYPE certmanager_csi_certificate_request_renewal_timestamp_seconds gauge
 certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 200
-# HELP certmanager_csi_driver_issue_call_count The number of issue() calls made by the driver.
-# TYPE certmanager_csi_driver_issue_call_count counter
-certmanager_csi_driver_issue_call_count{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_count The number of certificates managed by the csi driver.
-# TYPE certmanager_csi_managed_certificate_count counter
-certmanager_csi_managed_certificate_count{node="f56fd9f8b"} 1
-# HELP certmanager_csi_managed_volume_count The number of volume managed by the csi driver.
-# TYPE certmanager_csi_managed_volume_count counter
-certmanager_csi_managed_volume_count{node="f56fd9f8b"} 1
+# HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
+# TYPE certmanager_csi_driver_issue_call_count_total counter
+certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
+# HELP certmanager_csi_managed_certificate_count_total The number of certificates managed by the csi driver.
+# TYPE certmanager_csi_managed_certificate_count_total counter
+certmanager_csi_managed_certificate_count_total{node="f56fd9f8b"} 1
+# HELP certmanager_csi_managed_volume_count_total The number of volume managed by the csi driver.
+# TYPE certmanager_csi_managed_volume_count_total counter
+certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 `
 	waitForMetrics(t, ctx, metricsEndpoint, strings.ReplaceAll(expectedOutputTemplate, "test-cr-name", req.Name))
 
@@ -229,15 +245,15 @@ certmanager_csi_managed_volume_count{node="f56fd9f8b"} 1
 	}
 
 	// Should expose no CertificateRequest and only metrics counters
-	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_driver_issue_call_count The number of issue() calls made by the driver.
-# TYPE certmanager_csi_driver_issue_call_count counter
-certmanager_csi_driver_issue_call_count{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_count The number of certificates managed by the csi driver.
-# TYPE certmanager_csi_managed_certificate_count counter
-certmanager_csi_managed_certificate_count{node="f56fd9f8b"} 1
-# HELP certmanager_csi_managed_volume_count The number of volume managed by the csi driver.
-# TYPE certmanager_csi_managed_volume_count counter
-certmanager_csi_managed_volume_count{node="f56fd9f8b"} 1
+	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
+# TYPE certmanager_csi_driver_issue_call_count_total counter
+certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
+# HELP certmanager_csi_managed_certificate_count_total The number of certificates managed by the csi driver.
+# TYPE certmanager_csi_managed_certificate_count_total counter
+certmanager_csi_managed_certificate_count_total{node="f56fd9f8b"} 1
+# HELP certmanager_csi_managed_volume_count_total The number of volume managed by the csi driver.
+# TYPE certmanager_csi_managed_volume_count_total counter
+certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 `)
 
 }

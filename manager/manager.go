@@ -400,7 +400,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log.Info("Processing issuance")
 
 	// Increase issue count
-	m.metrics.IncrementIssueCallCount(m.nodeNameHash, volumeID)
+	m.metrics.IncrementIssueCallCountTotal(m.nodeNameHash, volumeID)
 
 	if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 		return fmt.Errorf("cleaning up stale requests: %w", err)
@@ -779,7 +779,7 @@ func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (m
 		// how to proceed depending on the context this method was called within.
 		if err := m.issue(ctx, volumeID); err != nil {
 			// Increase issue error count
-			m.metrics.IncrementIssueErrorCount(m.nodeNameHash, volumeID)
+			m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
 			return true, err
 		}
 	}
@@ -808,7 +808,7 @@ func (m *Manager) manageVolumeIfNotManaged(volumeID string) (managed bool) {
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
 	// Increase managed volume count for this driver
-	m.metrics.IncrementManagedVolumeCount(m.nodeNameHash)
+	m.metrics.IncrementManagedVolumeCountTotal(m.nodeNameHash)
 
 	return true
 }
@@ -828,7 +828,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 
 	// Increase managed certificate count for this driver.
 	// We assume each volume will have one certificate to be managed.
-	m.metrics.IncrementManagedCertificateCount(m.nodeNameHash)
+	m.metrics.IncrementManagedCertificateCountTotal(m.nodeNameHash)
 
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -866,7 +866,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							// Increase issue error count
-							m.metrics.IncrementIssueErrorCount(m.nodeNameHash, volumeID)
+							m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
 							return false, nil
 						}
 						return true, nil

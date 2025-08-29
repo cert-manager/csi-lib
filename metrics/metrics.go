@@ -38,10 +38,10 @@ type Metrics struct {
 	certificateRequestExpiryTimeSeconds  *prometheus.GaugeVec
 	certificateRequestRenewalTimeSeconds *prometheus.GaugeVec
 	certificateRequestReadyStatus        *prometheus.GaugeVec
-	driverIssueCallCount                 *prometheus.CounterVec
-	driverIssueErrorCount                *prometheus.CounterVec
-	managedVolumeCount                   *prometheus.CounterVec
-	managedCertificateCount              *prometheus.CounterVec
+	driverIssueCallCountTotal            *prometheus.CounterVec
+	driverIssueErrorCountTotal           *prometheus.CounterVec
+	managedVolumeCountTotal              *prometheus.CounterVec
+	managedCertificateCountTotal         *prometheus.CounterVec
 }
 
 // New creates a Metrics struct and populates it with prometheus metric types.
@@ -77,41 +77,41 @@ func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
 			[]string{"name", "namespace", "condition", "issuer_name", "issuer_kind", "issuer_group"},
 		)
 
-		driverIssueCallCount = prometheus.NewCounterVec(
+		driverIssueCallCountTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "driver_issue_call_count",
+				Name:      "driver_issue_call_count_total",
 				Help:      "The number of issue() calls made by the driver.",
 			},
 			[]string{"node", "volume"},
 		)
 
-		driverIssueErrorCount = prometheus.NewCounterVec(
+		driverIssueErrorCountTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "driver_issue_error_count",
+				Name:      "driver_issue_error_count_total",
 				Help:      "The number of errors encountered during the driver issue() calls.",
 			},
 			[]string{"node", "volume"},
 		)
 
-		managedVolumeCount = prometheus.NewCounterVec(
+		managedVolumeCountTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "managed_volume_count",
+				Name:      "managed_volume_count_total",
 				Help:      "The number of volume managed by the csi driver.",
 			},
 			[]string{"node"},
 		)
 
-		managedCertificateCount = prometheus.NewCounterVec(
+		managedCertificateCountTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "managed_certificate_count",
+				Name:      "managed_certificate_count_total",
 				Help:      "The number of certificates managed by the csi driver.",
 			},
 			[]string{"node"},
@@ -126,19 +126,19 @@ func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
 		certificateRequestExpiryTimeSeconds:  certificateRequestExpiryTimeSeconds,
 		certificateRequestRenewalTimeSeconds: certificateRequestRenewalTimeSeconds,
 		certificateRequestReadyStatus:        certificateRequestReadyStatus,
-		driverIssueCallCount:                 driverIssueCallCount,
-		driverIssueErrorCount:                driverIssueErrorCount,
-		managedVolumeCount:                   managedVolumeCount,
-		managedCertificateCount:              managedCertificateCount,
+		driverIssueCallCountTotal:            driverIssueCallCountTotal,
+		driverIssueErrorCountTotal:           driverIssueErrorCountTotal,
+		managedVolumeCountTotal:              managedVolumeCountTotal,
+		managedCertificateCountTotal:         managedCertificateCountTotal,
 	}
 
 	m.registry.MustRegister(m.certificateRequestExpiryTimeSeconds)
 	m.registry.MustRegister(m.certificateRequestRenewalTimeSeconds)
 	m.registry.MustRegister(m.certificateRequestReadyStatus)
-	m.registry.MustRegister(m.driverIssueCallCount)
-	m.registry.MustRegister(m.driverIssueErrorCount)
-	m.registry.MustRegister(m.managedVolumeCount)
-	m.registry.MustRegister(m.managedCertificateCount)
+	m.registry.MustRegister(m.driverIssueCallCountTotal)
+	m.registry.MustRegister(m.driverIssueErrorCountTotal)
+	m.registry.MustRegister(m.managedVolumeCountTotal)
+	m.registry.MustRegister(m.managedCertificateCountTotal)
 
 	return m
 }
@@ -151,22 +151,22 @@ func (m *Metrics) DefaultHandler() http.Handler {
 	return mux
 }
 
-// IncrementIssueCallCount will increase the issue call counter for the driver.
-func (m *Metrics) IncrementIssueCallCount(nodeNameHash, volumeID string) {
-	m.driverIssueCallCount.WithLabelValues(nodeNameHash, volumeID).Inc()
+// IncrementIssueCallCountTotal will increase the issue call counter for the driver.
+func (m *Metrics) IncrementIssueCallCountTotal(nodeNameHash, volumeID string) {
+	m.driverIssueCallCountTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
 }
 
-// IncrementIssueErrorCount will increase count of errors during issue call of the driver.
-func (m *Metrics) IncrementIssueErrorCount(nodeNameHash, volumeID string) {
-	m.driverIssueErrorCount.WithLabelValues(nodeNameHash, volumeID).Inc()
+// IncrementIssueErrorCountTotal will increase count of errors during issue call of the driver.
+func (m *Metrics) IncrementIssueErrorCountTotal(nodeNameHash, volumeID string) {
+	m.driverIssueErrorCountTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
 }
 
-// IncrementManagedVolumeCount will increase the managed volume counter for the driver.
-func (m *Metrics) IncrementManagedVolumeCount(nodeNameHash string) {
-	m.managedVolumeCount.WithLabelValues(nodeNameHash).Inc()
+// IncrementManagedVolumeCountTotal will increase the managed volume counter for the driver.
+func (m *Metrics) IncrementManagedVolumeCountTotal(nodeNameHash string) {
+	m.managedVolumeCountTotal.WithLabelValues(nodeNameHash).Inc()
 }
 
-// IncrementManagedCertificateCount will increase the managed certificate count for the driver.
-func (m *Metrics) IncrementManagedCertificateCount(nodeNameHash string) {
-	m.managedCertificateCount.WithLabelValues(nodeNameHash).Inc()
+// IncrementManagedCertificateCountTotal will increase the managed certificate count for the driver.
+func (m *Metrics) IncrementManagedCertificateCountTotal(nodeNameHash string) {
+	m.managedCertificateCountTotal.WithLabelValues(nodeNameHash).Inc()
 }
