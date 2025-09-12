@@ -29,6 +29,11 @@ import (
 	"testing"
 	"time"
 
+	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
+	"github.com/cert-manager/cert-manager/pkg/client/informers/externalversions"
+	testcrypto "github.com/cert-manager/cert-manager/test/unit/crypto"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr/testr"
 	"github.com/prometheus/client_golang/prometheus"
@@ -36,9 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	fakeclock "k8s.io/utils/clock/testing"
 
-	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
-	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
-	testcrypto "github.com/cert-manager/cert-manager/test/unit/crypto"
+	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/metrics"
@@ -95,9 +98,20 @@ func TestMetricsServer(t *testing.T) {
 
 	testLog := testr.New(t)
 	testNamespace := "test-ns"
+	testNodeId := "test-node"
 
 	// Build metrics handler, and start metrics server with a random available port
 	metricsHandler := metrics.New(&testLog, prometheus.NewRegistry())
+	store := storage.NewMemoryFS()
+	fakeClient := fake.NewSimpleClientset()
+	// client-go imposes a minimum resync period of 1 second, so that is the lowest we can go
+	// https://github.com/kubernetes/client-go/blob/5a019202120ab4dd7dfb3788e5cb87269f343ebe/tools/cache/shared_informer.go#L575
+	factory := externalversions.NewSharedInformerFactory(fakeClient, time.Second)
+	certRequestInformer := factory.Certmanager().V1().CertificateRequests()
+	metricsHandler.SetupCertificateRequestCollector(internalapiutil.HashIdentifier(testNodeId), store, certRequestInformer.Lister())
+	factory.Start(ctx.Done())
+	factory.WaitForCacheSync(ctx.Done())
+
 	// listenConfig
 	listenConfig := &net.ListenConfig{}
 	metricsLn, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:0")
@@ -135,12 +149,13 @@ func TestMetricsServer(t *testing.T) {
 	}()
 
 	// Build and start the driver
-	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
 	opts, cl, stop := testdriver.Run(t, testdriver.Options{
 		Store:   store,
 		Clock:   clock,
 		Metrics: metricsHandler,
+		Client:  fakeClient,
+		NodeID:  testNodeId,
 		Log:     &testLog,
 		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
 			return nil, nil
@@ -163,7 +178,7 @@ func TestMetricsServer(t *testing.T) {
 				"ca":   ca,
 				"cert": chain,
 			})
-			nextIssuanceTime := clock.Now().Add(time.Hour)
+			nextIssuanceTime := time.Unix(200, 0)
 			meta.NextIssuanceTime = &nextIssuanceTime
 			return store.WriteMetadata(meta.VolumeID, meta)
 		},
@@ -172,7 +187,13 @@ func TestMetricsServer(t *testing.T) {
 
 	// Should expose no additional metrics
 	metricsEndpoint := fmt.Sprintf("http://%s/metrics", metricsServer.Addr)
-	waitForMetrics(t, ctx, metricsEndpoint, "")
+	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count_total counter
+certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 0
+# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
+# TYPE certmanager_csi_managed_volume_count_total counter
+certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 0
+`)
 
 	// Create a self-signed Certificate and wait for it to be issued
 	privKey := testcrypto.MustCreatePEMPrivateKey(t)
@@ -213,8 +234,8 @@ func TestMetricsServer(t *testing.T) {
 	}
 
 	// Should expose that CertificateRequest as ready with expiry and renewal time
-	// node="f56fd9f8b" is the hash value of "test-node" defined in driver_testing.go
-	expectedOutputTemplate := `# HELP certmanager_csi_certificate_request_expiration_timestamp_seconds The date after which the certificate request expires. Expressed as a Unix Epoch Time.
+	// node="f56fd9f8b" is the hash value of "test-node"
+	expectedOutputTemplate := `# HELP certmanager_csi_certificate_request_expiration_timestamp_seconds The timestamp after which the certificate request expires, expressed in Unix Epoch Time.
 # TYPE certmanager_csi_certificate_request_expiration_timestamp_seconds gauge
 certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 300
 # HELP certmanager_csi_certificate_request_ready_status The ready status of the certificate request.
@@ -222,16 +243,16 @@ certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="t
 certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 0
 certmanager_csi_certificate_request_ready_status{condition="True",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 1
 certmanager_csi_certificate_request_ready_status{condition="Unknown",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 0
-# HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The number of seconds before expiration time the certificate request should renew.
+# HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The timestamp after which the certificate request should be renewed, expressed in Unix Epoch Time.
 # TYPE certmanager_csi_certificate_request_renewal_timestamp_seconds gauge
 certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 200
 # HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
 # TYPE certmanager_csi_driver_issue_call_count_total counter
 certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_count_total The number of certificates managed by the csi driver.
-# TYPE certmanager_csi_managed_certificate_count_total counter
-certmanager_csi_managed_certificate_count_total{node="f56fd9f8b"} 1
-# HELP certmanager_csi_managed_volume_count_total The number of volume managed by the csi driver.
+# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count_total counter
+certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 1
+# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
 # TYPE certmanager_csi_managed_volume_count_total counter
 certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 `
@@ -245,17 +266,21 @@ certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = opts.Client.CertmanagerV1().CertificateRequests(testNamespace).Delete(ctx, req.Name, metav1.DeleteOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Should expose no CertificateRequest and only metrics counters
 	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
 # TYPE certmanager_csi_driver_issue_call_count_total counter
 certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_count_total The number of certificates managed by the csi driver.
-# TYPE certmanager_csi_managed_certificate_count_total counter
-certmanager_csi_managed_certificate_count_total{node="f56fd9f8b"} 1
-# HELP certmanager_csi_managed_volume_count_total The number of volume managed by the csi driver.
+# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count_total counter
+certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 0
+# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
 # TYPE certmanager_csi_managed_volume_count_total counter
-certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
+certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 0
 `)
 
 }
