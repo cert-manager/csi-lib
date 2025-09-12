@@ -21,24 +21,31 @@ import (
 	"testing"
 	"time"
 
+	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/cert-manager/cert-manager/pkg/client/clientset/versioned/fake"
+	"github.com/cert-manager/cert-manager/pkg/client/informers/externalversions"
+	testcrypto "github.com/cert-manager/cert-manager/test/unit/crypto"
+	"github.com/cert-manager/cert-manager/test/unit/gen"
 	"github.com/go-logr/logr/testr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/stretchr/testify/assert"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
-	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
-	testcrypto "github.com/cert-manager/cert-manager/test/unit/crypto"
-	"github.com/cert-manager/cert-manager/test/unit/gen"
+	internalapi "github.com/cert-manager/csi-lib/internal/api"
+	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
+	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/storage"
 )
 
 const expiryMetadata = `
-	# HELP certmanager_csi_certificate_request_expiration_timestamp_seconds The date after which the certificate request expires. Expressed as a Unix Epoch Time.
+	# HELP certmanager_csi_certificate_request_expiration_timestamp_seconds The timestamp after which the certificate request expires, expressed in Unix Epoch Time.
 	# TYPE certmanager_csi_certificate_request_expiration_timestamp_seconds gauge
 `
 
 const renewalTimeMetadata = `
-	# HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The number of seconds before expiration time the certificate request should renew.
+	# HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The timestamp after which the certificate request should be renewed, expressed in Unix Epoch Time.
 	# TYPE certmanager_csi_certificate_request_renewal_timestamp_seconds gauge
 `
 
@@ -48,9 +55,25 @@ const readyMetadata = `
 `
 
 func TestCertificateRequestMetrics(t *testing.T) {
+	testNodeName := "test-node-name"
+	testVolumeID := "test-vol-id"
+
+	// private key to be used to generate X509 certificate
+	privKey := testcrypto.MustCreatePEMPrivateKey(t)
+	certTemplate := &cmapi.Certificate{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "test-ns", Name: "test-cert"},
+		Spec: cmapi.CertificateSpec{
+			CommonName: "test.example.com",
+		},
+	}
+	notBefore := time.Unix(0, 0)
+	notAfter := time.Unix(100, 0)
+	testCert := testcrypto.MustCreateCertWithNotBeforeAfter(t, privKey, certTemplate, notBefore, notAfter)
+	renew := time.Unix(50, 0)
+
 	type testT struct {
 		cr                                                 *cmapi.CertificateRequest
-		notAfter, renewBefore                              time.Time
+		meta                                               metadata.Metadata
 		expectedExpiry, expectedReady, expectedRenewalTime string
 	}
 	tests := map[string]testT{
@@ -66,11 +89,11 @@ func TestCertificateRequestMetrics(t *testing.T) {
 					Type:   cmapi.CertificateRequestConditionReady,
 					Status: cmmeta.ConditionTrue,
 				}),
+				gen.SetCertificateRequestCertificate(testCert),
 			),
-			notAfter: time.Unix(2208988804, 0),
 
 			expectedExpiry: `
-	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 2.208988804e+09
+	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 100
 `,
 			expectedReady: `
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 0
@@ -115,8 +138,8 @@ func TestCertificateRequestMetrics(t *testing.T) {
 					Type:   cmapi.CertificateRequestConditionReady,
 					Status: cmmeta.ConditionFalse,
 				}),
+				gen.SetCertificateRequestCertificate(testCert),
 			),
-			notAfter: time.Unix(100, 0),
 
 			expectedExpiry: `
 	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 100
@@ -142,11 +165,11 @@ func TestCertificateRequestMetrics(t *testing.T) {
 					Type:   cmapi.CertificateRequestConditionReady,
 					Status: cmmeta.ConditionUnknown,
 				}),
+				gen.SetCertificateRequestCertificate(testCert),
 			),
-			notAfter: time.Unix(99999, 0),
 
 			expectedExpiry: `
-	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 99999
+	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 100
 `,
 			expectedReady: `
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 0
@@ -169,12 +192,15 @@ func TestCertificateRequestMetrics(t *testing.T) {
 					Type:   cmapi.CertificateRequestConditionReady,
 					Status: cmmeta.ConditionTrue,
 				}),
+				gen.SetCertificateRequestCertificate(testCert),
 			),
-			notAfter:    time.Unix(2208988804, 0),
-			renewBefore: time.Unix(2108988804, 0),
+			meta: metadata.Metadata{
+				VolumeID:         testVolumeID,
+				NextIssuanceTime: &renew,
+			},
 
 			expectedExpiry: `
-	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 2.208988804e+09
+	certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 100
 `,
 			expectedReady: `
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 0
@@ -182,7 +208,7 @@ func TestCertificateRequestMetrics(t *testing.T) {
         certmanager_csi_certificate_request_ready_status{condition="Unknown",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 0
 `,
 			expectedRenewalTime: `
-		certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 2.108988804e+09
+		certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-certificate-request",namespace="test-ns"} 50
 `,
 		},
 	}
@@ -190,35 +216,50 @@ func TestCertificateRequestMetrics(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			testLog := testr.New(t)
 			m := New(&testLog, prometheus.NewRegistry())
-			m.UpdateCertificateRequest(test.cr, test.notAfter, test.renewBefore)
 
-			if err := testutil.CollectAndCompare(m.certificateRequestExpiryTimeSeconds,
+			fakeClient := fake.NewSimpleClientset()
+			factory := externalversions.NewSharedInformerFactory(fakeClient, 0)
+			certRequestInformer := factory.Certmanager().V1().CertificateRequests()
+			test.cr.Labels = map[string]string{
+				internalapi.NodeIDHashLabelKey:   internalapiutil.HashIdentifier(testNodeName),
+				internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier(testVolumeID),
+			}
+			err := certRequestInformer.Informer().GetIndexer().Add(test.cr)
+			assert.NoError(t, err)
+			fakeMetadata := storage.NewMemoryFS()
+			fakeMetadata.RegisterMetadata(test.meta)
+			m.SetupCertificateRequestCollector(internalapiutil.HashIdentifier(testNodeName), fakeMetadata, certRequestInformer.Lister())
+
+			if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 				strings.NewReader(expiryMetadata+test.expectedExpiry),
 				"certmanager_csi_certificate_request_expiration_timestamp_seconds",
 			); err != nil {
 				t.Errorf("unexpected collecting result:\n%s", err)
 			}
 
-			if err := testutil.CollectAndCompare(m.certificateRequestRenewalTimeSeconds,
+			if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 				strings.NewReader(renewalTimeMetadata+test.expectedRenewalTime),
 				"certmanager_csi_certificate_request_renewal_timestamp_seconds",
 			); err != nil {
 				t.Errorf("unexpected collecting result:\n%s", err)
 			}
 
-			if err := testutil.CollectAndCompare(m.certificateRequestReadyStatus,
+			if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 				strings.NewReader(readyMetadata+test.expectedReady),
 				"certmanager_csi_certificate_request_ready_status",
 			); err != nil {
 				t.Errorf("unexpected collecting result:\n%s", err)
 			}
+
+			err = certRequestInformer.Informer().GetIndexer().Delete(test.cr)
+			assert.NoError(t, err)
 		})
 	}
 }
 
 func TestCertificateRequestCache(t *testing.T) {
-	testLog := testr.New(t)
-	m := New(&testLog, prometheus.NewRegistry())
+	testNodeName := "test-node-name"
+	testNodeNameHash := internalapiutil.HashIdentifier(testNodeName)
 
 	// private key to be used to generate X509 certificate
 	privKey := testcrypto.MustCreatePEMPrivateKey(t)
@@ -277,13 +318,47 @@ func TestCertificateRequestCache(t *testing.T) {
 			testcrypto.MustCreateCertWithNotBeforeAfter(t, privKey, certTemplate, notBefore, notAfter3)),
 	)
 
-	// Observe all three Certificate metrics
-	m.UpdateCertificateRequest(cr1, notAfter1, renew1)
-	m.UpdateCertificateRequest(cr2, notAfter2, renew2)
-	m.UpdateCertificateRequest(cr3, notAfter3, renew3)
+	cr1.Labels = map[string]string{
+		internalapi.NodeIDHashLabelKey:   testNodeNameHash,
+		internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier("vol-1"),
+	}
+	cr2.Labels = map[string]string{
+		internalapi.NodeIDHashLabelKey:   testNodeNameHash,
+		internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier("vol-2"),
+	}
+	cr3.Labels = map[string]string{
+		internalapi.NodeIDHashLabelKey:   testNodeNameHash,
+		internalapi.VolumeIDHashLabelKey: internalapiutil.HashIdentifier("vol-3"),
+	}
+
+	fakeMetadata := storage.NewMemoryFS()
+	fakeMetadata.RegisterMetadata(metadata.Metadata{
+		VolumeID: "vol-1", NextIssuanceTime: &renew1,
+	})
+	fakeMetadata.RegisterMetadata(metadata.Metadata{
+		VolumeID: "vol-2", NextIssuanceTime: &renew2,
+	})
+	fakeMetadata.RegisterMetadata(metadata.Metadata{
+		VolumeID: "vol-3", NextIssuanceTime: &renew3,
+	})
+
+	fakeClient := fake.NewSimpleClientset()
+	factory := externalversions.NewSharedInformerFactory(fakeClient, 0)
+	certRequestInformer := factory.Certmanager().V1().CertificateRequests()
+
+	err := certRequestInformer.Informer().GetIndexer().Add(cr1)
+	assert.NoError(t, err)
+	err = certRequestInformer.Informer().GetIndexer().Add(cr2)
+	assert.NoError(t, err)
+	err = certRequestInformer.Informer().GetIndexer().Add(cr3)
+	assert.NoError(t, err)
+
+	testLog := testr.New(t)
+	m := New(&testLog, prometheus.NewRegistry())
+	m.SetupCertificateRequestCollector(testNodeNameHash, fakeMetadata, certRequestInformer.Lister())
 
 	// Check all three metrics exist
-	if err := testutil.CollectAndCompare(m.certificateRequestReadyStatus,
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 		strings.NewReader(readyMetadata+`
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 0
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr2",namespace="testns"} 0
@@ -299,7 +374,7 @@ func TestCertificateRequestCache(t *testing.T) {
 	); err != nil {
 		t.Errorf("unexpected collecting result:\n%s", err)
 	}
-	if err := testutil.CollectAndCompare(m.certificateRequestExpiryTimeSeconds,
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 		strings.NewReader(expiryMetadata+`
         certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 100
         certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr2",namespace="testns"} 200
@@ -310,7 +385,7 @@ func TestCertificateRequestCache(t *testing.T) {
 		t.Errorf("unexpected collecting result:\n%s", err)
 	}
 
-	if err := testutil.CollectAndCompare(m.certificateRequestRenewalTimeSeconds,
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 		strings.NewReader(renewalTimeMetadata+`
         certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 50
         certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr2",namespace="testns"} 150
@@ -322,8 +397,10 @@ func TestCertificateRequestCache(t *testing.T) {
 	}
 
 	// Remove second certificate and check not exists
-	m.RemoveCertificateRequest("cr2", "testns")
-	if err := testutil.CollectAndCompare(m.certificateRequestReadyStatus,
+	err = certRequestInformer.Informer().GetIndexer().Delete(cr2)
+	assert.NoError(t, err)
+
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 		strings.NewReader(readyMetadata+`
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 0
         certmanager_csi_certificate_request_ready_status{condition="False",issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr3",namespace="testns"} 1
@@ -336,7 +413,7 @@ func TestCertificateRequestCache(t *testing.T) {
 	); err != nil {
 		t.Errorf("unexpected collecting result:\n%s", err)
 	}
-	if err := testutil.CollectAndCompare(m.certificateRequestExpiryTimeSeconds,
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 		strings.NewReader(expiryMetadata+`
         certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 100
         certmanager_csi_certificate_request_expiration_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr3",namespace="testns"} 300
@@ -345,15 +422,31 @@ func TestCertificateRequestCache(t *testing.T) {
 	); err != nil {
 		t.Errorf("unexpected collecting result:\n%s", err)
 	}
+	if err := testutil.CollectAndCompare(m.certificateRequestCollector,
+		strings.NewReader(renewalTimeMetadata+`
+        certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr1",namespace="testns"} 50
+        certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="cr3",namespace="testns"} 250
+`),
+		"certmanager_csi_certificate_request_renewal_timestamp_seconds",
+	); err != nil {
+		t.Errorf("unexpected collecting result:\n%s", err)
+	}
 
 	// Remove all Certificates (even is already removed) and observe no Certificates
-	m.RemoveCertificateRequest("cr1", "testns")
-	m.RemoveCertificateRequest("cr2", "testns")
-	m.RemoveCertificateRequest("cr3", "testns")
-	if testutil.CollectAndCount(m.certificateRequestReadyStatus, "certmanager_csi_certificate_request_ready_status") != 0 {
+	err = certRequestInformer.Informer().GetIndexer().Delete(cr1)
+	assert.NoError(t, err)
+	err = certRequestInformer.Informer().GetIndexer().Delete(cr2)
+	assert.NoError(t, err)
+	err = certRequestInformer.Informer().GetIndexer().Delete(cr3)
+	assert.NoError(t, err)
+
+	if testutil.CollectAndCount(m.certificateRequestCollector, "certmanager_csi_certificate_request_ready_status") != 0 {
 		t.Errorf("unexpected collecting result")
 	}
-	if testutil.CollectAndCount(m.certificateRequestExpiryTimeSeconds, "certmanager_csi_certificate_request_expiration_timestamp_seconds") != 0 {
+	if testutil.CollectAndCount(m.certificateRequestCollector, "certmanager_csi_certificate_request_expiration_timestamp_seconds") != 0 {
+		t.Errorf("unexpected collecting result")
+	}
+	if testutil.CollectAndCount(m.certificateRequestCollector, "certmanager_csi_certificate_request_renewal_timestamp_seconds") != 0 {
 		t.Errorf("unexpected collecting result")
 	}
 }

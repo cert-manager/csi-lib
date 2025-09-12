@@ -34,7 +34,6 @@ import (
 	cminformers "github.com/cert-manager/cert-manager/pkg/client/informers/externalversions"
 	cmlisters "github.com/cert-manager/cert-manager/pkg/client/listers/certmanager/v1"
 	"github.com/go-logr/logr"
-	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -130,9 +129,6 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	if opts.Log == nil {
 		return nil, errors.New("log must be set")
-	}
-	if opts.Metrics == nil {
-		opts.Metrics = metrics.New(opts.Log, prometheus.NewRegistry())
 	}
 	if opts.MetadataReader == nil {
 		return nil, errors.New("MetadataReader must be set")
@@ -400,7 +396,9 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	log.Info("Processing issuance")
 
 	// Increase issue count
-	m.metrics.IncrementIssueCallCountTotal(m.nodeNameHash, volumeID)
+	if m.metrics != nil {
+		m.metrics.IncrementIssueCallCountTotal(m.nodeNameHash, volumeID)
+	}
 
 	if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 		return fmt.Errorf("cleaning up stale requests: %w", err)
@@ -609,7 +607,7 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 	// Calculate the default next issuance time.
 	// The implementation's writeKeypair function may override this value before
 	// writing to the storage layer.
-	expiryPoint, renewalPoint, err := getExpiryAndDefaultNextIssuanceTime(req.Status.Certificate)
+	renewalPoint, err := calculateNextIssuanceTime(req.Status.Certificate)
 	if err != nil {
 		return fmt.Errorf("calculating next issuance time: %w", err)
 	}
@@ -620,10 +618,6 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		return fmt.Errorf("writing keypair: %w", err)
 	}
 	log.V(2).Info("Wrote new keypair to storage")
-
-	// Update the request metrics.
-	// Using meta.NextIssuanceTime instead of renewalPoint here, in case writeKeypair overrides the value.
-	m.metrics.UpdateCertificateRequest(req, expiryPoint, *meta.NextIssuanceTime)
 
 	// We must explicitly delete the private key from the pending requests map so that the existing Completed
 	// request will not be re-used upon renewal.
@@ -675,9 +669,6 @@ func (m *Manager) cleanupStaleRequests(ctx context.Context, log logr.Logger, vol
 				return fmt.Errorf("deleting old certificaterequest: %w", err)
 			}
 		}
-
-		// Remove the CertificateRequest from the metrics.
-		m.metrics.RemoveCertificateRequest(toDelete.Name, toDelete.Namespace)
 
 		log.Info("Deleted CertificateRequest resource", "name", toDelete.Name, "namespace", toDelete.Namespace)
 	}
@@ -779,7 +770,9 @@ func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (m
 		// how to proceed depending on the context this method was called within.
 		if err := m.issue(ctx, volumeID); err != nil {
 			// Increase issue error count
-			m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+			if m.metrics != nil {
+				m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+			}
 			return true, err
 		}
 	}
@@ -807,8 +800,6 @@ func (m *Manager) manageVolumeIfNotManaged(volumeID string) (managed bool) {
 	// construct a new channel used to stop management of the volume
 	stopCh := make(chan struct{})
 	m.managedVolumes[volumeID] = stopCh
-	// Increase managed volume count for this driver
-	m.metrics.IncrementManagedVolumeCountTotal(m.nodeNameHash)
 
 	return true
 }
@@ -825,10 +816,6 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 		log.Info("Volume not registered for management, cannot start renewal routine...")
 		return false
 	}
-
-	// Increase managed certificate count for this driver.
-	// We assume each volume will have one certificate to be managed.
-	m.metrics.IncrementManagedCertificateCountTotal(m.nodeNameHash)
 
 	// Create a context that will be cancelled when the stopCh is closed
 	ctx, cancel := context.WithCancel(context.Background())
@@ -866,7 +853,9 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
 							// Increase issue error count
-							m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+							if m.metrics != nil {
+								m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+							}
 							return false, nil
 						}
 						return true, nil
@@ -906,14 +895,6 @@ func (m *Manager) UnmanageVolume(volumeID string) {
 	if stopCh, ok := m.managedVolumes[volumeID]; ok {
 		close(stopCh)
 		delete(m.managedVolumes, volumeID)
-		if reqs, err := m.listAllRequestsForVolume(volumeID); err == nil {
-			// Remove the CertificateRequest from the metrics with the best effort.
-			for _, req := range reqs {
-				if req != nil {
-					m.metrics.RemoveCertificateRequest(req.Name, req.Namespace)
-				}
-			}
-		}
 	}
 }
 
@@ -959,19 +940,19 @@ func (m *Manager) Stop() {
 	}
 }
 
-// getExpiryAndDefaultNextIssuanceTime will return the certificate expiry time, together with
-// default time at which the certificate should be renewed by the driver- 2/3rds through its
-// lifetime (NotAfter - NotBefore).
-func getExpiryAndDefaultNextIssuanceTime(chain []byte) (time.Time, time.Time, error) {
+// calculateNextIssuanceTime will return the default time at which the certificate
+// should be renewed by the driver- 2/3rds through its lifetime (NotAfter -
+// NotBefore).
+func calculateNextIssuanceTime(chain []byte) (time.Time, error) {
 	block, _ := pem.Decode(chain)
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
+		return time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
 	}
 
 	actualDuration := crt.NotAfter.Sub(crt.NotBefore)
 
 	renewBeforeNotAfter := actualDuration / 3
 
-	return crt.NotAfter, crt.NotAfter.Add(-renewBeforeNotAfter), nil
+	return crt.NotAfter.Add(-renewBeforeNotAfter), nil
 }
