@@ -468,7 +468,7 @@ func TestManager_cleanupStaleRequests(t *testing.T) {
 	}
 }
 
-func Test_getExpiryAndDefaultNextIssuanceTime(t *testing.T) {
+func Test_calculateNextIssuanceTime(t *testing.T) {
 	notBefore := time.Date(1970, time.January, 1, 0, 0, 0, 0, time.UTC)
 	notAfter := time.Date(1970, time.January, 4, 0, 0, 0, 0, time.UTC)
 	pk, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -488,23 +488,20 @@ func Test_getExpiryAndDefaultNextIssuanceTime(t *testing.T) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 
 	tests := map[string]struct {
-		expTime   time.Time
-		renewTime time.Time
-		expErr    bool
+		expTime time.Time
+		expErr  bool
 	}{
 		"if no attributes given, return 2/3rd certificate lifetime": {
-			expTime:   notAfter,
-			renewTime: notBefore.AddDate(0, 0, 2),
-			expErr:    false,
+			expTime: notBefore.AddDate(0, 0, 2),
+			expErr:  false,
 		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			expTime, renewTime, err := getExpiryAndDefaultNextIssuanceTime(certPEM)
+			renewTime, err := calculateNextIssuanceTime(certPEM)
 			assert.Equal(t, test.expErr, err != nil)
-			assert.Equal(t, test.expTime, expTime)
-			assert.Equal(t, test.renewTime, renewTime)
+			assert.Equal(t, test.expTime, renewTime)
 		})
 	}
 }
