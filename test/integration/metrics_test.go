@@ -41,7 +41,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	fakeclock "k8s.io/utils/clock/testing"
 
-	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/metrics"
@@ -108,7 +107,7 @@ func TestMetricsServer(t *testing.T) {
 	// https://github.com/kubernetes/client-go/blob/5a019202120ab4dd7dfb3788e5cb87269f343ebe/tools/cache/shared_informer.go#L575
 	factory := externalversions.NewSharedInformerFactory(fakeClient, time.Second)
 	certRequestInformer := factory.Certmanager().V1().CertificateRequests()
-	metricsHandler.SetupCertificateRequestCollector(internalapiutil.HashIdentifier(testNodeId), store, certRequestInformer.Lister())
+	metricsHandler.SetupCertificateRequestCollector(testNodeId, store, certRequestInformer.Lister())
 	factory.Start(ctx.Done())
 	factory.WaitForCacheSync(ctx.Done())
 
