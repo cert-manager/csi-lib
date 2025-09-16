@@ -28,6 +28,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -35,11 +36,15 @@ import (
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
+	"github.com/cert-manager/cert-manager/pkg/client/informers/externalversions"
 	"github.com/cert-manager/cert-manager/pkg/util/pki"
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
+	"github.com/prometheus/client_golang/prometheus"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2/klogr"
 	"k8s.io/utils/clock"
@@ -103,13 +108,23 @@ func main() {
 
 	store.FSGroupVolumeAttributeKey = FsGroupKey
 
-	d, err := driver.New(context.Background(), *endpoint, log, driver.Options{
+	cmClient := cmclient.NewForConfigOrDie(restConfig)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	metricsHandler, err := startMetricsServer(ctx, *nodeID, log, cmClient, store)
+	if err != nil {
+		panic("failed to setup metrics server: " + err.Error())
+	}
+
+	d, err := driver.New(ctx, *endpoint, log, driver.Options{
 		DriverName:    "csi.cert-manager.io",
 		DriverVersion: "v0.0.1",
 		NodeID:        *nodeID,
 		Store:         store,
 		Manager: manager.NewManagerOrDie(manager.Options{
-			Client:             cmclient.NewForConfigOrDie(restConfig),
+			Client:             cmClient,
 			MetadataReader:     store,
 			Clock:              clock.RealClock{},
 			Log:                &log,
@@ -118,6 +133,7 @@ func main() {
 			GenerateRequest:    generateRequest,
 			SignRequest:        signRequest,
 			WriteKeypair:       (&writer{store: store}).writeKeypair,
+			Metrics:            metricsHandler,
 		}),
 	})
 	if err != nil {
@@ -349,4 +365,63 @@ func keyUsagesFromAttributes(usagesCSV string) []cmapi.KeyUsage {
 	}
 
 	return keyUsages
+}
+
+// startMetricsServer starts a server listening on port 6443, until the supplied context is cancelled,
+// after which the server will gracefully shutdown (within 5 seconds).
+func startMetricsServer(
+	rootCtx context.Context,
+	nodeId string,
+	logger logr.Logger,
+	cmClient *cmclient.Clientset,
+	metadataReader storage.MetadataReader,
+) (*metrics.Metrics, error) {
+	g, ctx := errgroup.WithContext(rootCtx)
+	defer func() {
+		if err := g.Wait(); err != nil {
+			logger.Error(err, "fail to stop metric server")
+		}
+	}()
+
+	metricsHandler := metrics.New(&logger, prometheus.NewRegistry())
+
+	certRequestInformerFactory := externalversions.NewSharedInformerFactory(cmClient, 5*time.Second)
+	certRequestInformer := certRequestInformerFactory.Certmanager().V1().CertificateRequests()
+	metricsHandler.SetupCertificateRequestCollector(nodeId, metadataReader, certRequestInformer.Lister())
+
+	listenConfig := &net.ListenConfig{}
+	metricsLn, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:6443")
+	if err != nil {
+		return nil, err
+	}
+	metricsServer := &http.Server{
+		Addr:           metricsLn.Addr().String(),
+		ReadTimeout:    8 * time.Second,
+		WriteTimeout:   8 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MiB
+		Handler:        metricsHandler.DefaultHandler(),
+	}
+
+	g.Go(func() error {
+		certRequestInformerFactory.Start(ctx.Done())
+		certRequestInformerFactory.WaitForCacheSync(ctx.Done())
+		return nil
+	})
+	g.Go(func() error {
+		<-rootCtx.Done()
+		// allow a timeout for graceful shutdown
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// nolint: contextcheck
+		return metricsServer.Shutdown(shutdownCtx)
+	})
+	g.Go(func() error {
+		logger.Info("starting metrics server", "address", metricsLn.Addr())
+		if err := metricsServer.Serve(metricsLn); err != http.ErrServerClosed {
+			return err
+		}
+		return nil
+	})
+	return metricsHandler, nil
 }

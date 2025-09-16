@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/storage"
 )
 
@@ -95,8 +96,8 @@ func (m *Metrics) DefaultHandler() http.Handler {
 	return mux
 }
 
-func (m *Metrics) SetupCertificateRequestCollector(nodeNameHash string, metadataReader storage.MetadataReader, certificateRequestLister cmlisters.CertificateRequestLister) {
-	m.certificateRequestCollector = NewCertificateRequestCollector(nodeNameHash, metadataReader, certificateRequestLister)
+func (m *Metrics) SetupCertificateRequestCollector(nodeId string, metadataReader storage.MetadataReader, certificateRequestLister cmlisters.CertificateRequestLister) {
+	m.certificateRequestCollector = NewCertificateRequestCollector(internalapiutil.HashIdentifier(nodeId), metadataReader, certificateRequestLister)
 	m.registry.MustRegister(m.certificateRequestCollector)
 }
 
