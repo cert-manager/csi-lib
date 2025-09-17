@@ -215,7 +215,6 @@ func TestCertificateRequestMetrics(t *testing.T) {
 	for n, test := range tests {
 		t.Run(n, func(t *testing.T) {
 			testLog := testr.New(t)
-			m := New(&testLog, prometheus.NewRegistry())
 
 			fakeClient := fake.NewSimpleClientset()
 			factory := externalversions.NewSharedInformerFactory(fakeClient, 0)
@@ -228,7 +227,7 @@ func TestCertificateRequestMetrics(t *testing.T) {
 			assert.NoError(t, err)
 			fakeMetadata := storage.NewMemoryFS()
 			fakeMetadata.RegisterMetadata(test.meta)
-			m.SetupCertificateRequestCollector(testNodeName, fakeMetadata, certRequestInformer.Lister())
+			m := New(testNodeName, &testLog, prometheus.NewRegistry(), fakeMetadata, certRequestInformer.Lister())
 
 			if err := testutil.CollectAndCompare(m.certificateRequestCollector,
 				strings.NewReader(expiryMetadata+test.expectedExpiry),
@@ -354,8 +353,7 @@ func TestCertificateRequestCache(t *testing.T) {
 	assert.NoError(t, err)
 
 	testLog := testr.New(t)
-	m := New(&testLog, prometheus.NewRegistry())
-	m.SetupCertificateRequestCollector(testNodeName, fakeMetadata, certRequestInformer.Lister())
+	m := New(testNodeName, &testLog, prometheus.NewRegistry(), fakeMetadata, certRequestInformer.Lister())
 
 	// Check all three metrics exist
 	if err := testutil.CollectAndCompare(m.certificateRequestCollector,

@@ -45,7 +45,13 @@ type Metrics struct {
 }
 
 // New creates a Metrics struct and populates it with prometheus metric types.
-func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
+func New(
+	nodeId string,
+	logger *logr.Logger,
+	registry *prometheus.Registry,
+	metadataReader storage.MetadataReader,
+	certificateRequestLister cmlisters.CertificateRequestLister,
+) *Metrics {
 	var (
 		// driverIssueCallCountTotal is a Prometheus counter for the number of issue() calls made by the driver.
 		driverIssueCallCountTotal = prometheus.NewCounterVec(
@@ -71,11 +77,6 @@ func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
 		)
 	)
 
-	registry.MustRegister(
-		driverIssueCallCountTotal,
-		driverIssueErrorCountTotal,
-	)
-
 	// Create server and register Prometheus metrics handler
 	m := &Metrics{
 		log:      logger.WithName("metrics"),
@@ -83,7 +84,18 @@ func New(logger *logr.Logger, registry *prometheus.Registry) *Metrics {
 
 		driverIssueCallCountTotal:  driverIssueCallCountTotal,
 		driverIssueErrorCountTotal: driverIssueErrorCountTotal,
+		certificateRequestCollector: NewCertificateRequestCollector(
+			internalapiutil.HashIdentifier(nodeId),
+			metadataReader,
+			certificateRequestLister,
+		),
 	}
+
+	m.registry.MustRegister(
+		driverIssueCallCountTotal,
+		driverIssueErrorCountTotal,
+		m.certificateRequestCollector,
+	)
 
 	return m
 }

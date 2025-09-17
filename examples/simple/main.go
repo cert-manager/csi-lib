@@ -43,6 +43,7 @@ import (
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
@@ -113,10 +114,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	metricsHandler, err := startMetricsServer(ctx, *nodeID, log, cmClient, store)
-	if err != nil {
-		panic("failed to setup metrics server: " + err.Error())
-	}
+	certRequestInformerFactory := externalversions.NewSharedInformerFactory(cmClient, 5*time.Second)
+	certRequestInformer := certRequestInformerFactory.Certmanager().V1().CertificateRequests()
+	metricsHandler := metrics.New(*nodeID, &log, prometheus.NewRegistry(), store, certRequestInformer.Lister())
+
+	go func() {
+		err := startMetricsServer(ctx, log, metricsHandler, certRequestInformerFactory)
+		if err != nil {
+			panic("failed to setup metrics server: " + err.Error())
+		}
+	}()
 
 	d, err := driver.New(ctx, *endpoint, log, driver.Options{
 		DriverName:    "csi.cert-manager.io",
@@ -367,32 +374,20 @@ func keyUsagesFromAttributes(usagesCSV string) []cmapi.KeyUsage {
 	return keyUsages
 }
 
-// startMetricsServer starts a server listening on port 6443, until the supplied context is cancelled,
+// startMetricsServer starts a server listening on port 9402, until the supplied context is cancelled,
 // after which the server will gracefully shutdown (within 5 seconds).
 func startMetricsServer(
 	rootCtx context.Context,
-	nodeId string,
 	logger logr.Logger,
-	cmClient *cmclient.Clientset,
-	metadataReader storage.MetadataReader,
-) (*metrics.Metrics, error) {
+	metricsHandler *metrics.Metrics,
+	certRequestInformerFactory externalversions.SharedInformerFactory,
+) error {
 	g, ctx := errgroup.WithContext(rootCtx)
-	defer func() {
-		if err := g.Wait(); err != nil {
-			logger.Error(err, "fail to stop metric server")
-		}
-	}()
-
-	metricsHandler := metrics.New(&logger, prometheus.NewRegistry())
-
-	certRequestInformerFactory := externalversions.NewSharedInformerFactory(cmClient, 5*time.Second)
-	certRequestInformer := certRequestInformerFactory.Certmanager().V1().CertificateRequests()
-	metricsHandler.SetupCertificateRequestCollector(nodeId, metadataReader, certRequestInformer.Lister())
 
 	listenConfig := &net.ListenConfig{}
-	metricsLn, err := listenConfig.Listen(ctx, "tcp", "127.0.0.1:6443")
+	metricsLn, err := listenConfig.Listen(ctx, "tcp", ":9402")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	metricsServer := &http.Server{
 		Addr:           metricsLn.Addr().String(),
@@ -423,5 +418,5 @@ func startMetricsServer(
 		}
 		return nil
 	})
-	return metricsHandler, nil
+	return g.Wait()
 }
