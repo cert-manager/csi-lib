@@ -100,14 +100,13 @@ func TestMetricsServer(t *testing.T) {
 	testNodeId := "test-node"
 
 	// Build metrics handler, and start metrics server with a random available port
-	metricsHandler := metrics.New(&testLog, prometheus.NewRegistry())
 	store := storage.NewMemoryFS()
 	fakeClient := fake.NewSimpleClientset()
 	// client-go imposes a minimum resync period of 1 second, so that is the lowest we can go
 	// https://github.com/kubernetes/client-go/blob/5a019202120ab4dd7dfb3788e5cb87269f343ebe/tools/cache/shared_informer.go#L575
 	factory := externalversions.NewSharedInformerFactory(fakeClient, time.Second)
 	certRequestInformer := factory.Certmanager().V1().CertificateRequests()
-	metricsHandler.SetupCertificateRequestCollector(testNodeId, store, certRequestInformer.Lister())
+	metricsHandler := metrics.New(testNodeId, &testLog, prometheus.NewRegistry(), store, certRequestInformer.Lister())
 	factory.Start(ctx.Done())
 	factory.WaitForCacheSync(ctx.Done())
 

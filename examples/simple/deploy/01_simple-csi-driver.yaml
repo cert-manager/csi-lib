@@ -59,7 +59,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities: { drop: [ "ALL" ] }
             readOnlyRootFilesystem: true
-          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.13.0
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.14.0
           args:
             - --v=5
             - --csi-address=/plugin/csi.sock
@@ -94,6 +94,10 @@ spec:
                   fieldPath: spec.nodeName
             - name: CSI_ENDPOINT
               value: unix://plugin/csi.sock
+          ports:
+            - containerPort: 9402
+              name: http-metrics
+              protocol: TCP
           volumeMounts:
             - name: plugin-dir
               mountPath: /plugin
