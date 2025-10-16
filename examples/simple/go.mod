@@ -5,7 +5,7 @@ go 1.25.0
 replace github.com/cert-manager/csi-lib => ../../
 
 require (
-	github.com/cert-manager/cert-manager v1.19.0
+	github.com/cert-manager/cert-manager v1.19.1
 	github.com/cert-manager/csi-lib v0.0.0-00010101000000-000000000000
 	k8s.io/client-go v0.34.1
 	k8s.io/klog/v2 v2.130.1
