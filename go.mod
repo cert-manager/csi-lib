@@ -3,7 +3,7 @@ module github.com/cert-manager/csi-lib
 go 1.25.0
 
 require (
-	github.com/cert-manager/cert-manager v1.19.0
+	github.com/cert-manager/cert-manager v1.19.1
 	github.com/container-storage-interface/spec v1.11.0
 	github.com/go-logr/logr v1.4.3
 	github.com/kubernetes-csi/csi-lib-utils v0.22.0
