@@ -36,14 +36,13 @@ import (
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	cmclient "github.com/cert-manager/cert-manager/pkg/client/clientset/versioned"
 	"github.com/cert-manager/cert-manager/pkg/util/pki"
-	"k8s.io/client-go/rest"
-	"k8s.io/klog/v2/klogr"
-	"k8s.io/utils/clock"
-
 	"github.com/cert-manager/csi-lib/driver"
 	"github.com/cert-manager/csi-lib/manager"
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/storage"
+	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2/klogr"
+	"k8s.io/utils/clock"
 )
 
 const (
@@ -345,7 +344,7 @@ func keyUsagesFromAttributes(usagesCSV string) []cmapi.KeyUsage {
 	}
 
 	var keyUsages []cmapi.KeyUsage
-	for _, usage := range strings.Split(usagesCSV, ",") {
+	for usage := range strings.SplitSeq(usagesCSV, ",") {
 		keyUsages = append(keyUsages, cmapi.KeyUsage(strings.TrimSpace(usage)))
 	}
 

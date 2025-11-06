@@ -170,7 +170,7 @@ func NewManager(opts Options) (*Manager, error) {
 	// registered with the factory
 	lister := informerFactory.Certmanager().V1().CertificateRequests().Lister()
 	if _, err := informerFactory.Certmanager().V1().CertificateRequests().Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		DeleteFunc: func(obj interface{}) {
+		DeleteFunc: func(obj any) {
 			requestToPrivateKeyLock.Lock()
 			defer requestToPrivateKeyLock.Unlock()
 			key, ok := obj.(string)

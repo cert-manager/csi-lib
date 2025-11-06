@@ -101,7 +101,7 @@ func parseEndpoint(ep string) (string, string, error) {
 }
 
 func loggingInterceptor(log logr.Logger) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		log := log.WithValues("rpc_method", info.FullMethod, "request", protosanitizer.StripSecrets(req))
 		log.V(3).Info("handling request")
 		resp, err := handler(ctx, req)

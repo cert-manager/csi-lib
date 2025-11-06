@@ -18,6 +18,7 @@ package storage
 
 import (
 	"encoding/json"
+	"maps"
 	"sync"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -133,9 +134,7 @@ func (m *MemoryFS) WriteFiles(meta metadata.Metadata, files map[string][]byte) e
 	if !ok {
 		return ErrNotFound
 	}
-	for k, v := range files {
-		vol[k] = v
-	}
+	maps.Copy(vol, files)
 	return nil
 }
 
@@ -148,8 +147,6 @@ func (m *MemoryFS) ReadFiles(volumeID string) (map[string][]byte, error) {
 	}
 	// make a copy of the map to ensure no races can occur
 	cpy := make(map[string][]byte)
-	for k, v := range vol {
-		cpy[k] = v
-	}
+	maps.Copy(cpy, vol)
 	return cpy, nil
 }

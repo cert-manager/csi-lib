@@ -46,8 +46,7 @@ import (
 )
 
 func TestManager_ManageVolumeImmediate_issueOnceAndSucceed(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	opts := newDefaultTestOptions(t)
 	m, err := NewManager(opts)
@@ -251,8 +250,7 @@ func TestManager_ResumesManagementOfExistingVolumes(t *testing.T) {
 }
 
 func TestManager_ManageVolume_beginsManagingAndProceedsIfNotReady(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	opts := newDefaultTestOptions(t)
 	m, err := NewManager(opts)
