@@ -17,7 +17,6 @@ limitations under the License.
 package integration
 
 import (
-	"context"
 	"crypto"
 	"crypto/x509"
 	"os"
@@ -62,8 +61,7 @@ vnEIALrtIClFU6D/mTU5wyHhN29llwfjUgJrmYWqoWTZSiwGS6YmZpry
 -----END CERTIFICATE-----`)
 
 func TestIssuesCertificate(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
@@ -127,8 +125,7 @@ func TestIssuesCertificate(t *testing.T) {
 }
 
 func TestManager_CleansUpOldRequests(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	store := storage.NewMemoryFS()
 	clock := fakeclock.NewFakeClock(time.Now())
