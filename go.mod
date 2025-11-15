@@ -4,9 +4,9 @@ go 1.25.0
 
 require (
 	github.com/cert-manager/cert-manager v1.19.1
-	github.com/container-storage-interface/spec v1.11.0
+	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.3
-	github.com/kubernetes-csi/csi-lib-utils v0.22.0
+	github.com/kubernetes-csi/csi-lib-utils v0.23.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.76.0
 	k8s.io/apimachinery v0.34.2
