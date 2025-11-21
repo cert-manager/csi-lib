@@ -1,5 +1,5 @@
 /*
-Copyright 2024 The cert-manager Authors.
+Copyright 2025 The cert-manager Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ func New(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "driver_issue_call_count_total",
+				Name:      "issue_requests_total",
 				Help:      "The number of issue() calls made by the driver.",
 			},
 			[]string{"node", "volume"},
@@ -70,7 +70,7 @@ func New(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
-				Name:      "driver_issue_error_count_total",
+				Name:      "issue_errors_total",
 				Help:      "The number of errors encountered during the driver issue() calls.",
 			},
 			[]string{"node", "volume"},

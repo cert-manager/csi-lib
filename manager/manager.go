@@ -381,7 +381,7 @@ type Manager struct {
 	// It should not be used full-stop :).
 	doNotUse_CallOnEachIssue func()
 
-	// metrics is used to expose Prometheus
+	// metrics is used for Prometheus metrics collection
 	metrics *metrics.Metrics
 }
 
