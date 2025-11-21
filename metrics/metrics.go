@@ -39,8 +39,8 @@ type Metrics struct {
 	log      logr.Logger
 	registry *prometheus.Registry
 
-	driverIssueCallCountTotal   *prometheus.CounterVec
-	driverIssueErrorCountTotal  *prometheus.CounterVec
+	issueRequestsTotal          *prometheus.CounterVec
+	issueErrorsTotal            *prometheus.CounterVec
 	certificateRequestCollector prometheus.Collector
 }
 
@@ -53,8 +53,8 @@ func New(
 	certificateRequestLister cmlisters.CertificateRequestLister,
 ) *Metrics {
 	var (
-		// driverIssueCallCountTotal is a Prometheus counter for the number of issue() calls made by the driver.
-		driverIssueCallCountTotal = prometheus.NewCounterVec(
+		// issueRequestsTotal is a Prometheus counter for the number of issue() calls made by the driver.
+		issueRequestsTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
@@ -64,9 +64,9 @@ func New(
 			[]string{"node", "volume"},
 		)
 
-		// driverIssueErrorCountTotal is a Prometheus counter for the number of errors encountered
+		// issueErrorsTotal is a Prometheus counter for the number of errors encountered
 		// during the driver issue() calls.
-		driverIssueErrorCountTotal = prometheus.NewCounterVec(
+		issueErrorsTotal = prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Namespace: namespace,
 				Subsystem: subsystem,
@@ -82,8 +82,8 @@ func New(
 		log:      logger.WithName("metrics"),
 		registry: registry,
 
-		driverIssueCallCountTotal:  driverIssueCallCountTotal,
-		driverIssueErrorCountTotal: driverIssueErrorCountTotal,
+		issueRequestsTotal: issueRequestsTotal,
+		issueErrorsTotal:   issueErrorsTotal,
 		certificateRequestCollector: NewCertificateRequestCollector(
 			internalapiutil.HashIdentifier(nodeId),
 			metadataReader,
@@ -92,8 +92,8 @@ func New(
 	}
 
 	m.registry.MustRegister(
-		driverIssueCallCountTotal,
-		driverIssueErrorCountTotal,
+		issueRequestsTotal,
+		issueErrorsTotal,
 		m.certificateRequestCollector,
 	)
 
@@ -108,17 +108,12 @@ func (m *Metrics) DefaultHandler() http.Handler {
 	return mux
 }
 
-func (m *Metrics) SetupCertificateRequestCollector(nodeId string, metadataReader storage.MetadataReader, certificateRequestLister cmlisters.CertificateRequestLister) {
-	m.certificateRequestCollector = NewCertificateRequestCollector(internalapiutil.HashIdentifier(nodeId), metadataReader, certificateRequestLister)
-	m.registry.MustRegister(m.certificateRequestCollector)
-}
-
 // IncrementIssueCallCountTotal will increase the issue call counter for the driver.
 func (m *Metrics) IncrementIssueCallCountTotal(nodeNameHash, volumeID string) {
-	m.driverIssueCallCountTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
+	m.issueRequestsTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
 }
 
 // IncrementIssueErrorCountTotal will increase count of errors during issue call of the driver.
 func (m *Metrics) IncrementIssueErrorCountTotal(nodeNameHash, volumeID string) {
-	m.driverIssueErrorCountTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
+	m.issueErrorsTotal.WithLabelValues(nodeNameHash, volumeID).Inc()
 }

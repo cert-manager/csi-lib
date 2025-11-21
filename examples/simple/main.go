@@ -43,11 +43,10 @@ import (
 	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog/v2/klogr"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 )
 
@@ -95,7 +94,7 @@ func main() {
 		panic("-data-root must be set")
 	}
 
-	log := klogr.New()
+	log := klog.Background()
 
 	restConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -119,7 +118,7 @@ func main() {
 	metricsHandler := metrics.New(*nodeID, &log, prometheus.NewRegistry(), store, certRequestInformer.Lister())
 
 	go func() {
-		err := startMetricsServer(ctx, log, metricsHandler, certRequestInformerFactory)
+		err := startMetricsServer(ctx, metricsHandler, certRequestInformerFactory)
 		if err != nil {
 			panic("failed to setup metrics server: " + err.Error())
 		}
@@ -378,7 +377,6 @@ func keyUsagesFromAttributes(usagesCSV string) []cmapi.KeyUsage {
 // after which the server will gracefully shutdown (within 5 seconds).
 func startMetricsServer(
 	rootCtx context.Context,
-	logger logr.Logger,
 	metricsHandler *metrics.Metrics,
 	certRequestInformerFactory externalversions.SharedInformerFactory,
 ) error {
@@ -412,7 +410,7 @@ func startMetricsServer(
 		return metricsServer.Shutdown(shutdownCtx)
 	})
 	g.Go(func() error {
-		logger.Info("starting metrics server", "address", metricsLn.Addr())
+		// starting metrics server
 		if err := metricsServer.Serve(metricsLn); err != http.ErrServerClosed {
 			return err
 		}

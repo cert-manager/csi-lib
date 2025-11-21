@@ -373,25 +373,12 @@ type Manager struct {
 	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
 	requestNameGenerator func() string
 
-	// doNotUse_CallOnEachIssue is a field used SOLELY for testing, and cannot be configured by external package consumers.
-	// It is used to perform some action (e.g. counting) each time issue() is called.
-	// It will be removed as soon as we have actual metrics support in csi-lib, which will allow us to measure
-	// things like the number of times issue() is called.
-	// No thread safety is added around this field, and it MUST NOT be used for any implementation logic.
-	// It should not be used full-stop :).
-	doNotUse_CallOnEachIssue func()
-
 	// metrics is used for Prometheus metrics collection
 	metrics *metrics.Metrics
 }
 
 // issue will step through the entire issuance flow for a volume.
 func (m *Manager) issue(ctx context.Context, volumeID string) error {
-	// TODO: remove this code and replace with actual metrics support
-	if m.doNotUse_CallOnEachIssue != nil {
-		m.doNotUse_CallOnEachIssue()
-	}
-
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
 

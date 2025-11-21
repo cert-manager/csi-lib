@@ -244,9 +244,9 @@ certmanager_csi_certificate_request_ready_status{condition="Unknown",issuer_grou
 # HELP certmanager_csi_certificate_request_renewal_timestamp_seconds The timestamp after which the certificate request should be renewed, expressed in Unix Epoch Time.
 # TYPE certmanager_csi_certificate_request_renewal_timestamp_seconds gauge
 certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test-issuer-group",issuer_kind="test-issuer-kind",issuer_name="test-issuer",name="test-cr-name",namespace="test-ns"} 200
-# HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
-# TYPE certmanager_csi_driver_issue_call_count_total counter
-certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
+# HELP certmanager_csi_issue_requests_total The number of issue() calls made by the driver.
+# TYPE certmanager_csi_issue_requests_total counter
+certmanager_csi_issue_requests_total{node="f56fd9f8b",volume="test-vol"} 1
 # HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
 # TYPE certmanager_csi_managed_certificate_request_count_total counter
 certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 1
@@ -270,9 +270,9 @@ certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 	}
 
 	// Should expose no CertificateRequest and only metrics counters
-	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_driver_issue_call_count_total The number of issue() calls made by the driver.
-# TYPE certmanager_csi_driver_issue_call_count_total counter
-certmanager_csi_driver_issue_call_count_total{node="f56fd9f8b",volume="test-vol"} 1
+	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_issue_requests_total The number of issue() calls made by the driver.
+# TYPE certmanager_csi_issue_requests_total counter
+certmanager_csi_issue_requests_total{node="f56fd9f8b",volume="test-vol"} 1
 # HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
 # TYPE certmanager_csi_managed_certificate_request_count_total counter
 certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 0
