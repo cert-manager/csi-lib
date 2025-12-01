@@ -52,29 +52,27 @@ func New(
 	metadataReader storage.MetadataReader,
 	certificateRequestLister cmlisters.CertificateRequestLister,
 ) *Metrics {
-	var (
-		// issueRequestsTotal is a Prometheus counter for the number of issue() calls made by the driver.
-		issueRequestsTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Subsystem: subsystem,
-				Name:      "issue_requests_total",
-				Help:      "The number of issue() calls made by the driver.",
-			},
-			[]string{"node", "volume"},
-		)
+	// issueRequestsTotal is a Prometheus counter for the number of issue() calls made by the driver.
+	issueRequestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "issue_requests_total",
+			Help:      "The number of issue() calls made by the driver.",
+		},
+		[]string{"node", "volume"},
+	)
 
-		// issueErrorsTotal is a Prometheus counter for the number of errors encountered
-		// during the driver issue() calls.
-		issueErrorsTotal = prometheus.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Subsystem: subsystem,
-				Name:      "issue_errors_total",
-				Help:      "The number of errors encountered during the driver issue() calls.",
-			},
-			[]string{"node", "volume"},
-		)
+	// issueErrorsTotal is a Prometheus counter for the number of errors encountered
+	// during the driver issue() calls.
+	issueErrorsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: namespace,
+			Subsystem: subsystem,
+			Name:      "issue_errors_total",
+			Help:      "The number of errors encountered during the driver issue() calls.",
+		},
+		[]string{"node", "volume"},
 	)
 
 	// Create server and register Prometheus metrics handler
