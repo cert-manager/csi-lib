@@ -9,7 +9,7 @@ require (
 	github.com/cert-manager/csi-lib v0.0.0-00010101000000-000000000000
 	k8s.io/client-go v0.34.2
 	k8s.io/klog/v2 v2.130.1
-	k8s.io/utils v0.0.0-20250820121507-0af2bda4dd1d
+	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
 )
 
 require (
