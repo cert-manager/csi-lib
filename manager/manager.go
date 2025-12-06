@@ -47,6 +47,7 @@ import (
 	internalapi "github.com/cert-manager/csi-lib/internal/api"
 	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
 )
 
@@ -89,6 +90,9 @@ type Options struct {
 
 	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
 	RenewalBackoffConfig *wait.Backoff
+
+	// Metrics is used for exposing Prometheus metrics
+	Metrics *metrics.Metrics
 }
 
 // NewManager constructs a new manager used to manage volumes containing
@@ -241,6 +245,7 @@ func NewManager(opts Options) (*Manager, error) {
 		metadataReader:          opts.MetadataReader,
 		clock:                   opts.Clock,
 		log:                     *opts.Log,
+		metrics:                 opts.Metrics,
 
 		generatePrivateKey: opts.GeneratePrivateKey,
 		generateRequest:    opts.GenerateRequest,
@@ -368,24 +373,19 @@ type Manager struct {
 	// Defaults to uuid.NewUUID() from k8s.io/apimachinery/pkg/util/uuid.
 	requestNameGenerator func() string
 
-	// doNotUse_CallOnEachIssue is a field used SOLELY for testing, and cannot be configured by external package consumers.
-	// It is used to perform some action (e.g. counting) each time issue() is called.
-	// It will be removed as soon as we have actual metrics support in csi-lib, which will allow us to measure
-	// things like the number of times issue() is called.
-	// No thread safety is added around this field, and it MUST NOT be used for any implementation logic.
-	// It should not be used full-stop :).
-	doNotUse_CallOnEachIssue func()
+	// metrics is used for Prometheus metrics collection
+	metrics *metrics.Metrics
 }
 
 // issue will step through the entire issuance flow for a volume.
 func (m *Manager) issue(ctx context.Context, volumeID string) error {
-	// TODO: remove this code and replace with actual metrics support
-	if m.doNotUse_CallOnEachIssue != nil {
-		m.doNotUse_CallOnEachIssue()
-	}
-
 	log := m.log.WithValues("volume_id", volumeID)
 	log.Info("Processing issuance")
+
+	// Increase issue count
+	if m.metrics != nil {
+		m.metrics.IncrementIssueCallCountTotal(m.nodeNameHash, volumeID)
+	}
 
 	if err := m.cleanupStaleRequests(ctx, log, volumeID); err != nil {
 		return fmt.Errorf("cleaning up stale requests: %w", err)
@@ -756,6 +756,10 @@ func (m *Manager) ManageVolumeImmediate(ctx context.Context, volumeID string) (m
 		// If issuance fails, immediately return without retrying so the caller can decide
 		// how to proceed depending on the context this method was called within.
 		if err := m.issue(ctx, volumeID); err != nil {
+			// Increase issue error count
+			if m.metrics != nil {
+				m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+			}
 			return true, err
 		}
 	}
@@ -835,6 +839,10 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 						defer issueCancel()
 						if err := m.issue(issueCtx, volumeID); err != nil {
 							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
+							// Increase issue error count
+							if m.metrics != nil {
+								m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+							}
 							return false, nil
 						}
 						return true, nil
