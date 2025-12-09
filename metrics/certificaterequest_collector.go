@@ -39,8 +39,8 @@ var (
 	certRequestReadyStatusMetric          = prometheus.NewDesc("certmanager_csi_certificate_request_ready_status", "The ready status of the certificate request.", []string{"name", "namespace", "condition", "issuer_name", "issuer_kind", "issuer_group"}, nil)
 	certRequestExpirationTimestampSeconds = prometheus.NewDesc("certmanager_csi_certificate_request_expiration_timestamp_seconds", "The timestamp after which the certificate request expires, expressed in Unix Epoch Time.", []string{"name", "namespace", "issuer_name", "issuer_kind", "issuer_group"}, nil)
 	certRequestRenewalTimestampSeconds    = prometheus.NewDesc("certmanager_csi_certificate_request_renewal_timestamp_seconds", "The timestamp after which the certificate request should be renewed, expressed in Unix Epoch Time.", []string{"name", "namespace", "issuer_name", "issuer_kind", "issuer_group"}, nil)
-	managedVolumeCountTotal               = prometheus.NewDesc("certmanager_csi_managed_volume_count_total", "The total number of managed volumes by the csi driver.", []string{"node"}, nil)
-	managedCertRequestCountTotal          = prometheus.NewDesc("certmanager_csi_managed_certificate_request_count_total", "The total number of managed certificate requests by the csi driver.", []string{"node"}, nil)
+	managedVolumeCount                    = prometheus.NewDesc("certmanager_csi_managed_volume_count", "The number of managed volumes by the csi driver.", []string{"node"}, nil)
+	managedCertRequestCount               = prometheus.NewDesc("certmanager_csi_managed_certificate_request_count", "The number of managed certificate requests by the csi driver.", []string{"node"}, nil)
 )
 
 type CertificateRequestCollector struct {
@@ -50,8 +50,8 @@ type CertificateRequestCollector struct {
 	certificateRequestReadyStatusMetric          *prometheus.Desc
 	certificateRequestExpirationTimestampSeconds *prometheus.Desc
 	certificateRequestRenewalTimestampSeconds    *prometheus.Desc
-	managedVolumeCountTotal                      *prometheus.Desc
-	managedCertificateRequestCountTotal          *prometheus.Desc
+	managedVolumeCount                           *prometheus.Desc
+	managedCertificateRequestCount               *prometheus.Desc
 }
 
 func NewCertificateRequestCollector(nodeNameHash string, metadataReader storage.MetadataReader, certificateRequestLister cmlisters.CertificateRequestLister) prometheus.Collector {
@@ -62,8 +62,8 @@ func NewCertificateRequestCollector(nodeNameHash string, metadataReader storage.
 		certificateRequestReadyStatusMetric:          certRequestReadyStatusMetric,
 		certificateRequestExpirationTimestampSeconds: certRequestExpirationTimestampSeconds,
 		certificateRequestRenewalTimestampSeconds:    certRequestRenewalTimestampSeconds,
-		managedVolumeCountTotal:                      managedVolumeCountTotal,
-		managedCertificateRequestCountTotal:          managedCertRequestCountTotal,
+		managedVolumeCount:                           managedVolumeCount,
+		managedCertificateRequestCount:               managedCertRequestCount,
 	}
 }
 
@@ -71,8 +71,8 @@ func (cc *CertificateRequestCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- cc.certificateRequestReadyStatusMetric
 	ch <- cc.certificateRequestExpirationTimestampSeconds
 	ch <- cc.certificateRequestRenewalTimestampSeconds
-	ch <- cc.managedVolumeCountTotal
-	ch <- cc.managedCertificateRequestCountTotal
+	ch <- cc.managedVolumeCount
+	ch <- cc.managedCertificateRequestCount
 }
 
 func (cc *CertificateRequestCollector) Collect(ch chan<- prometheus.Metric) {
@@ -228,8 +228,8 @@ func (cc *CertificateRequestCollector) getNextIssuanceTimeMapFromMetadata() (map
 
 func (cc *CertificateRequestCollector) updateManagedVolumeCount(count int, ch chan<- prometheus.Metric) {
 	metric := prometheus.MustNewConstMetric(
-		cc.managedVolumeCountTotal,
-		prometheus.CounterValue,
+		cc.managedVolumeCount,
+		prometheus.GaugeValue,
 		float64(count),
 		cc.nodeNameHash,
 	)
@@ -239,8 +239,8 @@ func (cc *CertificateRequestCollector) updateManagedVolumeCount(count int, ch ch
 
 func (cc *CertificateRequestCollector) updateManagedCertificateRequestCount(count int, ch chan<- prometheus.Metric) {
 	metric := prometheus.MustNewConstMetric(
-		cc.managedCertificateRequestCountTotal,
-		prometheus.CounterValue,
+		cc.managedCertificateRequestCount,
+		prometheus.GaugeValue,
 		float64(count),
 		cc.nodeNameHash,
 	)

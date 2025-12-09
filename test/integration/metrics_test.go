@@ -185,12 +185,12 @@ func TestMetricsServer(t *testing.T) {
 
 	// Should expose no additional metrics
 	metricsEndpoint := fmt.Sprintf("http://%s/metrics", metricsServer.Addr)
-	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
-# TYPE certmanager_csi_managed_certificate_request_count_total counter
-certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 0
-# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
-# TYPE certmanager_csi_managed_volume_count_total counter
-certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 0
+	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_managed_certificate_request_count The number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count gauge
+certmanager_csi_managed_certificate_request_count{node="f56fd9f8b"} 0
+# HELP certmanager_csi_managed_volume_count The number of managed volumes by the csi driver.
+# TYPE certmanager_csi_managed_volume_count gauge
+certmanager_csi_managed_volume_count{node="f56fd9f8b"} 0
 `)
 
 	// Create a self-signed Certificate and wait for it to be issued
@@ -247,12 +247,12 @@ certmanager_csi_certificate_request_renewal_timestamp_seconds{issuer_group="test
 # HELP certmanager_csi_issue_requests_total The number of issue() calls made by the driver.
 # TYPE certmanager_csi_issue_requests_total counter
 certmanager_csi_issue_requests_total{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
-# TYPE certmanager_csi_managed_certificate_request_count_total counter
-certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 1
-# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
-# TYPE certmanager_csi_managed_volume_count_total counter
-certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
+# HELP certmanager_csi_managed_certificate_request_count The number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count gauge
+certmanager_csi_managed_certificate_request_count{node="f56fd9f8b"} 1
+# HELP certmanager_csi_managed_volume_count The number of managed volumes by the csi driver.
+# TYPE certmanager_csi_managed_volume_count gauge
+certmanager_csi_managed_volume_count{node="f56fd9f8b"} 1
 `
 	waitForMetrics(t, ctx, metricsEndpoint, strings.ReplaceAll(expectedOutputTemplate, "test-cr-name", req.Name))
 
@@ -273,12 +273,12 @@ certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 1
 	waitForMetrics(t, ctx, metricsEndpoint, `# HELP certmanager_csi_issue_requests_total The number of issue() calls made by the driver.
 # TYPE certmanager_csi_issue_requests_total counter
 certmanager_csi_issue_requests_total{node="f56fd9f8b",volume="test-vol"} 1
-# HELP certmanager_csi_managed_certificate_request_count_total The total number of managed certificate requests by the csi driver.
-# TYPE certmanager_csi_managed_certificate_request_count_total counter
-certmanager_csi_managed_certificate_request_count_total{node="f56fd9f8b"} 0
-# HELP certmanager_csi_managed_volume_count_total The total number of managed volumes by the csi driver.
-# TYPE certmanager_csi_managed_volume_count_total counter
-certmanager_csi_managed_volume_count_total{node="f56fd9f8b"} 0
+# HELP certmanager_csi_managed_certificate_request_count The number of managed certificate requests by the csi driver.
+# TYPE certmanager_csi_managed_certificate_request_count gauge
+certmanager_csi_managed_certificate_request_count{node="f56fd9f8b"} 0
+# HELP certmanager_csi_managed_volume_count The number of managed volumes by the csi driver.
+# TYPE certmanager_csi_managed_volume_count gauge
+certmanager_csi_managed_volume_count{node="f56fd9f8b"} 0
 `)
 
 }
