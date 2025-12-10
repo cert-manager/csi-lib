@@ -8,7 +8,7 @@ require (
 	github.com/cert-manager/cert-manager v1.19.1
 	github.com/cert-manager/csi-lib v0.0.0-00010101000000-000000000000
 	github.com/prometheus/client_golang v1.23.2
-	golang.org/x/sync v0.17.0
+	golang.org/x/sync v0.19.0
 	k8s.io/client-go v0.34.3
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/utils v0.0.0-20251002143259-bc988d571ff4
