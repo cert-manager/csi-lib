@@ -24,13 +24,13 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	cmapi "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 	cmmeta "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
 	"github.com/go-logr/logr/testr"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,6 +41,7 @@ import (
 	internalapi "github.com/cert-manager/csi-lib/internal/api"
 	internalapiutil "github.com/cert-manager/csi-lib/internal/api/util"
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/cert-manager/csi-lib/metrics"
 	"github.com/cert-manager/csi-lib/storage"
 	testutil "github.com/cert-manager/csi-lib/test/util"
 )
@@ -309,14 +310,13 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 
 	// Expected number of retries in each expBackOff cycle :=
 	// 				⌈log base expBackOffFactor of (expBackOffCap/expBackOffDuration)⌉
-	var expectNumOfRetries int32 = 3 // ⌈log2(500/100)⌉
+	var expectNumOfRetries float64 = 3 // ⌈log2(500/100)⌉
 
 	// Because in startRenewalRoutine, ticker := time.NewTicker(time.Second)
 	// 2 seconds should complete an expBackOff cycle
 	// ticker start time (1s) + expBackOffCap (0.5s) + expectNumOfRetries (3) * issueRenewalTimeout (0.1)
 	expectGlobalTimeout := 2 * time.Second
 
-	var numOfRetries int32 = 0 // init
 	opts := newDefaultTestOptions(t)
 	opts.RenewalBackoffConfig = &wait.Backoff{
 		Duration: expBackOffDuration,
@@ -325,27 +325,36 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 		Jitter:   expBackOffJitter,
 		Steps:    expBackOffSteps,
 	}
+
+	// Create the manager first to get access to the lister
 	m, err := NewManager(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	m.issueRenewalTimeout = issueRenewalTimeout
-	// Increment the 'numOfRetries' counter whenever issue() is called.
-	// TODO: replace usages of this function with reading from metrics.
-	m.doNotUse_CallOnEachIssue = func() {
-		atomic.AddInt32(&numOfRetries, 1) // run in a goroutine, thus increment it atomically
-	}
+
+	// Create metrics for the manager using the manager's lister
+	log := testr.New(t)
+	registry := prometheus.NewRegistry()
+	store := opts.MetadataReader.(storage.Interface)
+	metricsHandler := metrics.New(opts.NodeID, &log, registry, store, m.lister)
+
+	// Update the manager's metrics
+	m.metrics = metricsHandler
 
 	// Register a new volume with the metadata store
-	store := opts.MetadataReader.(storage.Interface)
 	meta := metadata.Metadata{
 		VolumeID:   "vol-id",
 		TargetPath: "/fake/path",
 	}
-	store.RegisterMetadata(meta)
+	if _, err := store.RegisterMetadata(meta); err != nil {
+		t.Fatal(err)
+	}
 	// Ensure we stop managing the volume after the test
 	defer func() {
-		store.RemoveVolume(meta.VolumeID)
+		if err := store.RemoveVolume(meta.VolumeID); err != nil {
+			t.Logf("failed to remove volume: %v", err)
+		}
 		m.UnmanageVolume(meta.VolumeID)
 	}()
 
@@ -357,9 +366,26 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 
 	time.Sleep(expectGlobalTimeout)
 
-	actualNumOfRetries := atomic.LoadInt32(&numOfRetries) // read atomically
+	// Read the metric value from the registry
+	// Gather all metrics and find the certmanager_csi_issue_requests_total metric
+	metricFamilies, err := registry.Gather()
+	if err != nil {
+		t.Fatalf("failed to gather metrics: %v", err)
+	}
+
+	var actualNumOfRetries float64
+	for _, mf := range metricFamilies {
+		if mf.GetName() == "certmanager_csi_issue_requests_total" {
+			// Get the first metric (there should only be one with our labels)
+			if len(mf.GetMetric()) > 0 {
+				actualNumOfRetries = mf.GetMetric()[0].GetCounter().GetValue()
+			}
+			break
+		}
+	}
+
 	if actualNumOfRetries != expectNumOfRetries {
-		t.Errorf("expect %d retires, but got %d", expectNumOfRetries, actualNumOfRetries)
+		t.Errorf("expect %g retries, but got %g", expectNumOfRetries, actualNumOfRetries)
 	}
 }
 
