@@ -6,7 +6,7 @@ require (
 	github.com/cert-manager/cert-manager v1.20.0-alpha.0.0.20251224093317-c825445c58f5
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.3
-	github.com/kubernetes-csi/csi-lib-utils v0.23.0
+	github.com/kubernetes-csi/csi-lib-utils v0.23.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.78.0
