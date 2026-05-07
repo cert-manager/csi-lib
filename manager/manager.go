@@ -254,6 +254,7 @@ func NewManager(opts Options) (*Manager, error) {
 		readyToRequest:     opts.ReadyToRequest,
 
 		managedVolumes: map[string]chan struct{}{},
+		volumeSecrets:  map[string]map[string]string{},
 		stopInformer:   stopCh,
 
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
@@ -353,6 +354,12 @@ type Manager struct {
 	// volume
 	managedVolumes map[string]chan struct{}
 
+	// volumeSecrets stores secrets from nodePublishSecretRef per volume in-memory.
+	// Secrets are not persisted to disk, so they must be re-registered on each
+	// NodePublishVolume call and kept alive here for background renewals.
+	volumeSecrets     map[string]map[string]string
+	volumeSecretsLock sync.Mutex
+
 	// Used to stop the informer watching for updates
 	stopInformer chan struct{}
 
@@ -395,6 +402,9 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	if err != nil {
 		return fmt.Errorf("reading metadata: %w", err)
 	}
+	m.volumeSecretsLock.Lock()
+	meta.Secrets = m.volumeSecrets[volumeID]
+	m.volumeSecretsLock.Unlock()
 	log.V(2).Info("Read metadata", "metadata", meta)
 
 	// check if there is already a pending request in-flight for this volume.
@@ -883,6 +893,19 @@ func (m *Manager) UnmanageVolume(volumeID string) {
 		close(stopCh)
 		delete(m.managedVolumes, volumeID)
 	}
+
+	m.volumeSecretsLock.Lock()
+	delete(m.volumeSecrets, volumeID)
+	m.volumeSecretsLock.Unlock()
+}
+
+// StoreVolumeSecrets stores secrets from nodePublishSecretRef for the given volume.
+// Must be called before ManageVolume/ManageVolumeImmediate so that secrets are
+// available during initial issuance and background renewals.
+func (m *Manager) StoreVolumeSecrets(volumeID string, secrets map[string]string) {
+	m.volumeSecretsLock.Lock()
+	defer m.volumeSecretsLock.Unlock()
+	m.volumeSecrets[volumeID] = secrets
 }
 
 func (m *Manager) IsVolumeReadyToRequest(volumeID string) (bool, string) {
