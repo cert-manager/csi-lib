@@ -97,6 +97,9 @@ func defaultTestOptions(t *testing.T, opts Options) Options {
 	if opts.RenewalBackoffConfig == nil {
 		opts.RenewalBackoffConfig = &wait.Backoff{Steps: math.MaxInt32} // backoff is always 0s for speedy tests
 	}
+	if opts.GateBackoffConfig == nil {
+		opts.GateBackoffConfig = &wait.Backoff{Steps: math.MaxInt32} // backoff is always 0s for speedy tests
+	}
 	return opts
 }
 

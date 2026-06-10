@@ -91,6 +91,15 @@ type Options struct {
 	// RenewalBackoffConfig configures the exponential backoff applied to certificate renewal failures.
 	RenewalBackoffConfig *wait.Backoff
 
+	// GateBackoffConfig configures the backoff applied when ReadyToRequestFunc
+	// returns false. This is an expected wait state (e.g. waiting for CNI to
+	// assign a pod IP), not a failure, and warrants a faster retry cadence than
+	// genuine issuance errors. The renewal loop selects between this backoff
+	// and RenewalBackoffConfig based on whether the issue() error wraps
+	// ErrNotReadyToRequest.
+	// If nil, defaults to: 1s base, factor 2.0, jitter 0.5, cap 10s.
+	GateBackoffConfig *wait.Backoff
+
 	// Metrics is used for exposing Prometheus metrics
 	Metrics *metrics.Metrics
 }
@@ -125,6 +134,18 @@ func NewManager(opts Options) (*Manager, error) {
 			Steps: math.MaxInt32,
 			// The maximum time between calls will be 5 minutes
 			Cap: time.Minute * 5,
+		}
+	}
+	if opts.GateBackoffConfig == nil {
+		// Gate-pending is a wait state, not a failure. Defaults are tuned for
+		// CNI-style gates that resolve in seconds — much faster than the
+		// signer-protective RenewalBackoffConfig defaults above.
+		opts.GateBackoffConfig = &wait.Backoff{
+			Duration: time.Second,
+			Factor:   2.0,
+			Jitter:   0.5,
+			Steps:    math.MaxInt32,
+			Cap:      time.Second * 10,
 		}
 	}
 	if opts.Log == nil {
@@ -259,6 +280,7 @@ func NewManager(opts Options) (*Manager, error) {
 		maxRequestsPerVolume: opts.MaxRequestsPerVolume,
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
+		gateBackoffConfig:    *opts.GateBackoffConfig,
 		issueRenewalTimeout:  time.Second * 60, // issueRenewalTimeout set to align with NodePublishVolume timeout value
 		requestNameGenerator: func() string {
 			return string(uuid.NewUUID())
@@ -366,6 +388,11 @@ type Manager struct {
 	// backoffConfig configures the exponential backoff applied to certificate renewal failures.
 	backoffConfig wait.Backoff
 
+	// gateBackoffConfig configures the backoff applied when ReadyToRequestFunc
+	// returns false. Distinct from backoffConfig because gate-pending is a
+	// wait state, not a failure, and warrants faster retry.
+	gateBackoffConfig wait.Backoff
+
 	// issueRenewalTimeout defines timeout value for each issue() call in renewal process
 	issueRenewalTimeout time.Duration
 
@@ -421,7 +448,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	}
 
 	if ready, reason := m.readyToRequest(meta); !ready {
-		return fmt.Errorf("driver is not ready to request a certificate for this volume: %v", reason)
+		return fmt.Errorf("%w for this volume: %s", ErrNotReadyToRequest, reason)
 	}
 	key, err := m.generatePrivateKey(meta)
 	if err != nil {
@@ -821,43 +848,67 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 				// management of this volume has been stopped, exit the goroutine
 				return
 			case <-ticker.C:
-				meta, err := m.metadataReader.ReadMetadata(volumeID)
-				if err != nil {
-					log.Error(err, "Failed to read metadata")
-					continue
-				}
-
-				if meta.NextIssuanceTime == nil || m.clock.Now().After(*meta.NextIssuanceTime) {
-					// If issuing a certificate fails, we don't go around the outer for loop again (as we'd then be creating
-					// a new CertificateRequest every second).
-					// Instead, retry within the same iteration of the for loop and apply an exponential backoff.
-					// Because we pass ctx through to the 'wait' package, if the stopCh is closed/context is cancelled,
-					// we'll immediately stop waiting and 'continue' which will then hit the `case <-stopCh` case in the `select`.
-					if err := wait.ExponentialBackoffWithContext(ctx, m.backoffConfig, func(ctx context.Context) (bool, error) {
-						log.Info("Triggering new issuance")
-						issueCtx, issueCancel := context.WithTimeout(ctx, m.issueRenewalTimeout)
-						defer issueCancel()
-						if err := m.issue(issueCtx, volumeID); err != nil {
-							log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
-							// Increase issue error count
-							if m.metrics != nil {
-								m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
-							}
-							return false, nil
-						}
-						return true, nil
-					}); err != nil {
-						if wait.Interrupted(err) {
-							continue
-						}
-						// this should never happen as the function above never actually returns errors
-						log.Error(err, "unexpected error")
-					}
-				}
+				m.attemptIssuanceIfDue(ctx, log, volumeID)
 			}
 		}
 	}()
 	return true
+}
+
+// attemptIssuanceIfDue reads the volume's metadata and, if a new issuance is
+// due, calls issue() with a class-aware retry. Errors wrapping
+// ErrNotReadyToRequest (gate-pending wait state) use gateBackoffConfig; all
+// other errors (signer failures, apiserver errors) use backoffConfig. Each
+// backoff is reset when the error class changes so a long run of one class
+// does not bleed into the other. Returns when issuance succeeds or ctx is
+// cancelled.
+func (m *Manager) attemptIssuanceIfDue(ctx context.Context, log logr.Logger, volumeID string) {
+	meta, err := m.metadataReader.ReadMetadata(volumeID)
+	if err != nil {
+		log.Error(err, "Failed to read metadata")
+		return
+	}
+	if meta.NextIssuanceTime != nil && !m.clock.Now().After(*meta.NextIssuanceTime) {
+		return
+	}
+
+	issuanceBackoff := m.backoffConfig
+	gateBackoff := m.gateBackoffConfig
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		log.Info("Triggering new issuance")
+		issueCtx, issueCancel := context.WithTimeout(ctx, m.issueRenewalTimeout)
+		err := m.issue(issueCtx, volumeID)
+		issueCancel()
+		if err == nil {
+			return
+		}
+
+		var delay time.Duration
+		if errors.Is(err, ErrNotReadyToRequest) {
+			log.V(4).Info("readiness gate not yet met, retrying with gate backoff", "error", err)
+			delay = gateBackoff.Step()
+			issuanceBackoff = m.backoffConfig
+		} else {
+			log.Error(err, "Failed to issue certificate, retrying after applying exponential backoff")
+			if m.metrics != nil {
+				m.metrics.IncrementIssueErrorCountTotal(m.nodeNameHash, volumeID)
+			}
+			delay = issuanceBackoff.Step()
+			gateBackoff = m.gateBackoffConfig
+		}
+
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
 }
 
 // ManageVolume will initiate management of data for the given volumeID. It will not wait for an initial certificate

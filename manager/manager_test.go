@@ -18,12 +18,16 @@ package manager
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"math"
 	"math/big"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -387,6 +391,159 @@ func TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors(t *testing.T)
 	if actualNumOfRetries != expectNumOfRetries {
 		t.Errorf("expect %g retries, but got %g", expectNumOfRetries, actualNumOfRetries)
 	}
+}
+
+// TestManager_attemptIssuanceIfDue_backoffByErrorClass exercises the retry
+// helper's selection between gateBackoffConfig (for ReadyToRequestFunc
+// returning false) and RenewalBackoffConfig (for issuance errors). Each
+// scenario scripts a sequence of per-issue() outcomes; the test asserts the
+// helper completes within a deadline that would be exceeded if the wrong
+// backoff were applied to the wrong error class.
+//
+// Calling attemptIssuanceIfDue directly avoids the renewal goroutine's 1-second
+// ticker tax that an end-to-end ManageVolume test would pay, so each scenario
+// runs in single-digit milliseconds. The integration path is already exercised
+// by TestManager_ManageVolume_beginsManagingAndProceedsIfNotReady and
+// TestManager_ManageVolume_exponentialBackOffRetryOnIssueErrors.
+func TestManager_attemptIssuanceIfDue_backoffByErrorClass(t *testing.T) {
+	type outcome int
+	const (
+		success outcome = iota
+		notReady
+		signFailure
+	)
+
+	const slow = 500 * time.Millisecond
+	const fast = 1 * time.Millisecond
+
+	tests := map[string]struct {
+		// One entry per issue() call. Runs out → subsequent attempts succeed.
+		script         []outcome
+		renewalBackoff *wait.Backoff
+		gateBackoff    *wait.Backoff
+		// wantUnder is the wall-clock budget. Set so a misrouted backoff would
+		// blow it (gate using renewalBackoff or vice versa).
+		wantUnder time.Duration
+	}{
+		"gate-pending uses gate backoff not renewal backoff": {
+			// 3 notReady × renewalBackoff would be ≥ 1.5s; gateBackoff makes it ≪100ms.
+			script:         []outcome{notReady, notReady, notReady},
+			renewalBackoff: &wait.Backoff{Duration: slow, Factor: 1.0, Steps: math.MaxInt32, Cap: slow},
+			gateBackoff:    &wait.Backoff{Duration: fast, Factor: 1.0, Steps: math.MaxInt32, Cap: fast},
+			wantUnder:      100 * time.Millisecond,
+		},
+		"issuance failure uses renewal backoff not gate backoff": {
+			// 2 signFailure × gateBackoff would be ≥ 1s; renewalBackoff makes it ≪100ms.
+			script:         []outcome{signFailure, signFailure},
+			renewalBackoff: &wait.Backoff{Duration: fast, Factor: 1.0, Steps: math.MaxInt32, Cap: fast},
+			gateBackoff:    &wait.Backoff{Duration: slow, Factor: 1.0, Steps: math.MaxInt32, Cap: slow},
+			wantUnder:      100 * time.Millisecond,
+		},
+		"alternating classes do not bleed: gate-pending then signer error then gate-pending recovers": {
+			// If either backoff failed to reset on class change, a later run of
+			// the same class would inherit a grown delay and exceed the budget.
+			script:         []outcome{notReady, notReady, signFailure, notReady, notReady},
+			renewalBackoff: &wait.Backoff{Duration: fast, Factor: 1.0, Steps: math.MaxInt32, Cap: fast},
+			gateBackoff:    &wait.Backoff{Duration: fast, Factor: 1.0, Steps: math.MaxInt32, Cap: fast},
+			wantUnder:      100 * time.Millisecond,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			// readyToRequest advances a shared per-issue() index; signRequest
+			// reads the same index so both stubs agree on which scripted
+			// outcome applies to the current issue() call.
+			var idx int32 = -1
+			readyToRequest := func(_ metadata.Metadata) (bool, string) {
+				i := int(atomic.AddInt32(&idx, 1))
+				if i < len(tc.script) && tc.script[i] == notReady {
+					return false, "gate not yet met"
+				}
+				return true, ""
+			}
+			signRequest := func(_ metadata.Metadata, _ crypto.PrivateKey, _ *x509.CertificateRequest) ([]byte, error) {
+				i := int(atomic.LoadInt32(&idx))
+				if i < len(tc.script) && tc.script[i] == signFailure {
+					return nil, fmt.Errorf("simulated signer error")
+				}
+				return nothingSignRequest(metadata.Metadata{}, nil, nil)
+			}
+
+			opts := newDefaultTestOptions(t)
+			opts.ReadyToRequest = readyToRequest
+			opts.SignRequest = signRequest
+			opts.RenewalBackoffConfig = tc.renewalBackoff
+			opts.GateBackoffConfig = tc.gateBackoff
+
+			m, err := NewManager(opts)
+			require.NoError(t, err)
+			m.issueRenewalTimeout = 100 * time.Millisecond
+
+			store := opts.MetadataReader.(storage.Interface)
+			meta := metadata.Metadata{VolumeID: "vol-id", TargetPath: "/fake/path"}
+			_, err = store.RegisterMetadata(meta)
+			require.NoError(t, err)
+			defer func() {
+				_ = store.RemoveVolume(meta.VolumeID)
+			}()
+
+			ctx := t.Context()
+			// Mark the eventual CertificateRequest as Issued so the call to
+			// m.issue() returns instead of polling forever for completion.
+			go testutil.IssueOneRequest(ctx, t, opts.Client, defaultTestNamespace, selfSignedExampleCertificate, []byte("ca bytes"))
+
+			log := testr.New(t)
+			start := time.Now()
+			m.attemptIssuanceIfDue(ctx, log, meta.VolumeID)
+			elapsed := time.Since(start)
+
+			assert.Less(t, elapsed, tc.wantUnder,
+				"attemptIssuanceIfDue took %s; expected <%s (likely wrong backoff applied to the wrong error class)", elapsed, tc.wantUnder)
+
+			reqs, listErr := opts.Client.CertmanagerV1().CertificateRequests("").List(ctx, metav1.ListOptions{})
+			require.NoError(t, listErr)
+			assert.Len(t, reqs.Items, 1, "expected exactly one CertificateRequest after successful issuance")
+		})
+	}
+}
+
+// TestManager_issue_wrapsErrNotReadyToRequest verifies issue() wraps the
+// readyToRequest false return with the exported sentinel, so the renewal loop
+// (and consumers) can detect gate-pending via errors.Is.
+func TestManager_issue_wrapsErrNotReadyToRequest(t *testing.T) {
+	opts := newDefaultTestOptions(t)
+	opts.ReadyToRequest = func(_ metadata.Metadata) (bool, string) {
+		return false, "gate not yet met"
+	}
+
+	m, err := NewManager(opts)
+	require.NoError(t, err)
+
+	store := opts.MetadataReader.(storage.Interface)
+	meta := metadata.Metadata{VolumeID: "vol-id", TargetPath: "/fake/path"}
+	_, err = store.RegisterMetadata(meta)
+	require.NoError(t, err)
+
+	err = m.issue(t.Context(), meta.VolumeID)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotReadyToRequest), "got %v", err)
+	assert.Contains(t, err.Error(), "gate not yet met")
+}
+
+// TestManager_NewManager_defaultsGateBackoffConfig locks in the chosen
+// defaults for GateBackoffConfig so changes to the defaults are explicit.
+func TestManager_NewManager_defaultsGateBackoffConfig(t *testing.T) {
+	opts := newDefaultTestOptions(t)
+	opts.GateBackoffConfig = nil
+
+	m, err := NewManager(opts)
+	require.NoError(t, err)
+
+	assert.Equal(t, time.Second, m.gateBackoffConfig.Duration)
+	assert.Equal(t, 2.0, m.gateBackoffConfig.Factor)
+	assert.Equal(t, 0.5, m.gateBackoffConfig.Jitter)
+	assert.Equal(t, 10*time.Second, m.gateBackoffConfig.Cap)
 }
 
 func TestManager_cleanupStaleRequests(t *testing.T) {
