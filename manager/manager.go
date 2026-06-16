@@ -96,8 +96,10 @@ type Options struct {
 	// assign a pod IP), not a failure, and warrants a faster retry cadence than
 	// genuine issuance errors. The renewal loop selects between this backoff
 	// and RenewalBackoffConfig based on whether the issue() error wraps
-	// ErrNotReadyToRequest.
-	// If nil, defaults to: 1s base, factor 2.0, jitter 0.5, cap 10s.
+	// errNotReadyToRequest.
+	// If nil, defaults to: 1s base, factor 2.0, jitter 0.5, cap 10s, and
+	// Steps set to math.MaxInt32 so the backoff is effectively never reset
+	// except on a successful issuance.
 	GateBackoffConfig *wait.Backoff
 
 	// Metrics is used for exposing Prometheus metrics
@@ -448,7 +450,7 @@ func (m *Manager) issue(ctx context.Context, volumeID string) error {
 	}
 
 	if ready, reason := m.readyToRequest(meta); !ready {
-		return fmt.Errorf("%w for this volume: %s", ErrNotReadyToRequest, reason)
+		return fmt.Errorf("%w for this volume: %s", errNotReadyToRequest, reason)
 	}
 	key, err := m.generatePrivateKey(meta)
 	if err != nil {
@@ -857,7 +859,7 @@ func (m *Manager) startRenewalRoutine(volumeID string) (started bool) {
 
 // attemptIssuanceIfDue reads the volume's metadata and, if a new issuance is
 // due, calls issue() with a class-aware retry. Errors wrapping
-// ErrNotReadyToRequest (gate-pending wait state) use gateBackoffConfig; all
+// errNotReadyToRequest (gate-pending wait state) use gateBackoffConfig; all
 // other errors (signer failures, apiserver errors) use backoffConfig. Each
 // backoff is reset when the error class changes so a long run of one class
 // does not bleed into the other. Returns when issuance succeeds or ctx is
@@ -875,10 +877,6 @@ func (m *Manager) attemptIssuanceIfDue(ctx context.Context, log logr.Logger, vol
 	issuanceBackoff := m.backoffConfig
 	gateBackoff := m.gateBackoffConfig
 	for {
-		if ctx.Err() != nil {
-			return
-		}
-
 		log.Info("Triggering new issuance")
 		issueCtx, issueCancel := context.WithTimeout(ctx, m.issueRenewalTimeout)
 		err := m.issue(issueCtx, volumeID)
@@ -888,7 +886,7 @@ func (m *Manager) attemptIssuanceIfDue(ctx context.Context, log logr.Logger, vol
 		}
 
 		var delay time.Duration
-		if errors.Is(err, ErrNotReadyToRequest) {
+		if errors.Is(err, errNotReadyToRequest) {
 			log.V(4).Info("readiness gate not yet met, retrying with gate backoff", "error", err)
 			delay = gateBackoff.Step()
 			issuanceBackoff = m.backoffConfig

@@ -508,10 +508,10 @@ func TestManager_attemptIssuanceIfDue_backoffByErrorClass(t *testing.T) {
 	}
 }
 
-// TestManager_issue_wrapsErrNotReadyToRequest verifies issue() wraps the
-// readyToRequest false return with the exported sentinel, so the renewal loop
-// (and consumers) can detect gate-pending via errors.Is.
-func TestManager_issue_wrapsErrNotReadyToRequest(t *testing.T) {
+// TestManager_issue_wrapsNotReadyError verifies issue() wraps the
+// readyToRequest false return with the errNotReadyToRequest sentinel so the
+// renewal loop can detect gate-pending via errors.Is.
+func TestManager_issue_wrapsNotReadyError(t *testing.T) {
 	opts := newDefaultTestOptions(t)
 	opts.ReadyToRequest = func(_ metadata.Metadata) (bool, string) {
 		return false, "gate not yet met"
@@ -527,7 +527,7 @@ func TestManager_issue_wrapsErrNotReadyToRequest(t *testing.T) {
 
 	err = m.issue(t.Context(), meta.VolumeID)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNotReadyToRequest), "got %v", err)
+	assert.True(t, errors.Is(err, errNotReadyToRequest), "got %v", err)
 	assert.Contains(t, err.Error(), "gate not yet met")
 }
 

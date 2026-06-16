@@ -29,13 +29,16 @@ import (
 	"github.com/cert-manager/csi-lib/metadata"
 )
 
-// ErrNotReadyToRequest is returned by the renewal loop's issue() when
-// ReadyToRequestFunc reports the driver is not yet ready (a wait state, not a
-// failure). The renewal loop uses errors.Is to distinguish this from real
-// issuance errors (signer down, apiserver error, denial) and applies a
-// separate, faster backoff appropriate for waiting on pod state. Consumers
-// can also use errors.Is to surface this case in their own observability.
-var ErrNotReadyToRequest = errors.New("driver is not ready to request a certificate")
+// errNotReadyToRequest is returned by issue() when ReadyToRequestFunc reports
+// the driver is not yet ready (a wait state, not a failure). The renewal loop
+// uses errors.Is to distinguish this from real issuance errors (signer down,
+// apiserver error, denial) and applies a separate, faster backoff appropriate
+// for waiting on pod state.
+//
+// Kept unexported because issue() is unexported and no current consumer needs
+// to detect this case via errors.Is. Can be promoted to exported if a real
+// use case appears.
+var errNotReadyToRequest = errors.New("driver is not ready to request a certificate")
 
 // GeneratePrivateKeyFunc returns a private key to be used for issuance of the
 // given request.
