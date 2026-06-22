@@ -406,7 +406,6 @@ func startMetricsServer(
 		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		// nolint: contextcheck
 		return metricsServer.Shutdown(shutdownCtx)
 	})
 	g.Go(func() error {
