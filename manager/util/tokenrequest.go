@@ -103,9 +103,9 @@ func EmptyAudienceTokenFromMetadata(meta metadata.Metadata) (string, error) {
 		Token string `json:"token"`
 	})
 
-	tokensJson, ok := meta.VolumeContext["csi.storage.k8s.io/serviceAccount.tokens"]
+	tokensJson, ok := meta.VolumeContext[metadata.SATokenVolumeContextKey]
 	if !ok {
-		return "", errors.New("'csi.storage.k8s.io/serviceAccount.tokens' not present in volume context, driver likely doesn't have token requests enabled")
+		return "", errors.New("'" + metadata.SATokenVolumeContextKey + "' not present in volume context, driver likely doesn't have token requests enabled")
 	}
 
 	err := json.Unmarshal([]byte(tokensJson), &tokens)

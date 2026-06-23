@@ -17,10 +17,17 @@ limitations under the License.
 package metadata
 
 import (
+	"maps"
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 )
+
+// SATokenVolumeContextKey is the VolumeContext key under which kubelet injects
+// the mounting pod's bound ServiceAccount bearer token when the CSIDriver
+// declares spec.tokenRequests. The value is sensitive and must never appear in
+// log output.
+const SATokenVolumeContextKey = "csi.storage.k8s.io/serviceAccount.tokens"
 
 // Metadata contains metadata about a particular CSI volume and its contents.
 // It is safe to be serialised to disk for later reading (e.g. upon renewals).
@@ -52,4 +59,20 @@ func FromNodePublishVolumeRequest(request *csi.NodePublishVolumeRequest) Metadat
 		VolumeContext:    request.GetVolumeContext(),
 		VolumeMountGroup: request.GetVolumeCapability().GetMount().GetVolumeMountGroup(),
 	}
+}
+
+// MarshalLog implements logr.Marshaler so that structured loggers redact the
+// SA bearer token from VolumeContext before emitting a log entry. Without
+// this, log.Info("...", "metadata", meta) would print the live
+// ServiceAccount token injected by kubelet.
+func (m Metadata) MarshalLog() any {
+	if _, ok := m.VolumeContext[SATokenVolumeContextKey]; !ok {
+		return m
+	}
+	redacted := m
+	vc := make(map[string]string, len(m.VolumeContext))
+	maps.Copy(vc, m.VolumeContext)
+	vc[SATokenVolumeContextKey] = "[REDACTED]"
+	redacted.VolumeContext = vc
+	return redacted
 }
