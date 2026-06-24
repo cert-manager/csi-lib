@@ -23,10 +23,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cert-manager/csi-lib/metadata"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
 	"google.golang.org/grpc"
+	protopb "google.golang.org/protobuf/proto"
 )
 
 type GRPCServer struct {
@@ -102,7 +104,8 @@ func parseEndpoint(ep string) (string, string, error) {
 
 func loggingInterceptor(log logr.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		log := log.WithValues("rpc_method", info.FullMethod, "request", protosanitizer.StripSecrets(req))
+		sanitized := protosanitizer.StripSecrets(redactSATokens(req))
+		log := log.WithValues("rpc_method", info.FullMethod, "request", sanitized)
 		log.V(3).Info("handling request")
 		resp, err := handler(ctx, req)
 		if err != nil {
@@ -112,4 +115,20 @@ func loggingInterceptor(log logr.Logger) grpc.UnaryServerInterceptor {
 		}
 		return resp, err
 	}
+}
+
+// redactSATokens returns a copy of req with the ServiceAccount bearer token
+// redacted (replaced with "[REDACTED]") in the VolumeContext of a
+// NodePublishVolumeRequest. All other request types are returned as-is. The original request is never mutated.
+func redactSATokens(req any) any {
+	npvr, ok := req.(*csi.NodePublishVolumeRequest)
+	if !ok {
+		return req
+	}
+	if _, hasToken := npvr.GetVolumeContext()[metadata.SATokenVolumeContextKey]; !hasToken {
+		return req
+	}
+	sanitized := protopb.Clone(npvr).(*csi.NodePublishVolumeRequest)
+	sanitized.VolumeContext[metadata.SATokenVolumeContextKey] = "[REDACTED]"
+	return sanitized
 }
