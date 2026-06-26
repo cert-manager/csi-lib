@@ -3,7 +3,7 @@ module github.com/cert-manager/csi-lib
 go 1.26.0
 
 require (
-	github.com/cert-manager/cert-manager v1.20.2
+	github.com/cert-manager/cert-manager v1.20.3
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/go-logr/logr v1.4.3
 	github.com/kubernetes-csi/csi-lib-utils v0.24.0
@@ -19,7 +19,7 @@ require (
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
+	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
