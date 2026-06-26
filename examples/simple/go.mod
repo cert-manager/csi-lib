@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/cert-manager/csi-lib => ../../
 
 require (
-	github.com/cert-manager/cert-manager v1.20.2
+	github.com/cert-manager/cert-manager v1.20.3
 	github.com/cert-manager/csi-lib v0.0.0-00010101000000-000000000000
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/sync v0.21.0
@@ -15,7 +15,7 @@ require (
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
+	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
