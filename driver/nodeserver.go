@@ -56,9 +56,15 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 	// clean up after ourselves if provisioning fails.
 	// this is required because if publishing never succeeds, unpublish is not
 	// called which leaves files around (and we may continue to renew if so).
+	//
+	// managed tracks whether THIS call started managing the volume.  We must
+	// only tear down state that we ourselves created; blindly calling
+	// UnmanageVolume/RemoveVolume when a concurrent request is already managing
+	// the volume would destroy that goroutine's in-progress issuance.
+	managed := false
 	success := false
 	defer func() {
-		if !success {
+		if !success && managed {
 			ns.manager.UnmanageVolume(req.GetVolumeId())
 			_ = ns.mounter.Unmount(req.GetTargetPath())
 			_ = ns.store.RemoveVolume(req.GetVolumeId())
@@ -98,17 +104,28 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		isReadyToRequest, reason := ns.manager.IsVolumeReadyToRequest(req.GetVolumeId())
 		if isReadyToRequest {
 			log.V(4).Info("Waiting for certificate to be issued...")
-			if _, err := ns.manager.ManageVolumeImmediate(ctx, req.GetVolumeId()); err != nil {
+			var err error
+			managed, err = ns.manager.ManageVolumeImmediate(ctx, req.GetVolumeId())
+			if err != nil {
 				return nil, err
+			}
+			if !managed {
+				// A concurrent NodePublishVolume is already managing this volume.
+				// Return Aborted so the kubelet retries; proceeding to mount would
+				// give the pod an empty volume with no certificate.
+				return nil, status.Error(codes.Aborted, "volume is already being provisioned by another request, retry later")
 			}
 			log.Info("Volume registered for management")
 		} else {
 			if ns.continueOnNotReady {
 				log.V(4).Info("Skipping waiting for certificate to be issued")
-				ns.manager.ManageVolume(req.GetVolumeId())
-				log.V(4).Info("Volume registered for management")
+				if ns.manager.ManageVolume(req.GetVolumeId()) {
+					managed = true
+					log.V(4).Info("Volume registered for management")
+				}
 			} else {
 				log.Info("Unable to request a certificate right now, will be retried", "reason", reason)
+				_ = ns.store.RemoveVolume(req.GetVolumeId())
 				return nil, fmt.Errorf("volume is not yet ready to be setup, will be retried: %s", reason)
 			}
 		}
