@@ -283,7 +283,7 @@ func NewManager(opts Options) (*Manager, error) {
 		nodeNameHash:         nodeNameHash,
 		backoffConfig:        *opts.RenewalBackoffConfig,
 		gateBackoffConfig:    *opts.GateBackoffConfig,
-		issueRenewalTimeout:  time.Second * 60, // issueRenewalTimeout set to align with NodePublishVolume timeout value
+		issueRenewalTimeout:  time.Minute * 5, // increased from 60s: give the issuer time to sign after the initial Unknown/Initializing stamp (ATHENS-9509)
 		requestNameGenerator: func() string {
 			return string(uuid.NewUUID())
 		},
@@ -514,6 +514,15 @@ func (m *Manager) findPendingRequest(meta metadata.Metadata) (*cmapi.Certificate
 	// only consider the newest request - we will never resume an older request
 	req := reqs[0]
 	if !certificateRequestCanBeResumed(req) {
+		readyCondition := apiutil.GetCertificateRequestCondition(req, cmapi.CertificateRequestConditionReady)
+		if readyCondition != nil {
+			m.log.Info("Existing CertificateRequest is not resumable — a new request will be created; if reason is Initializing the issuer had not yet signed the previous request",
+				"volume_id", meta.VolumeID,
+				"request_name", req.Name,
+				"request_namespace", req.Namespace,
+				"ready_reason", readyCondition.Reason,
+				"ready_message", readyCondition.Message)
+		}
 		return nil, nil
 	}
 
@@ -540,6 +549,11 @@ func certificateRequestCanBeResumed(req *cmapi.CertificateRequest) bool {
 
 func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metadata.Metadata, key crypto.PrivateKey, req *cmapi.CertificateRequest) error {
 	log := m.log.WithValues("volume_id", volumeID)
+
+	// Track when Unknown/Initializing is first observed so we can warn if the
+	// issuer is taking an unusually long time to sign (ATHENS-9509).
+	var initializingObservedAt time.Time
+	slowSigningWarned := false
 
 	// Poll every 200ms for the CertificateRequest to be ready
 	lastFailureReason := ""
@@ -592,6 +606,15 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 
 		switch readyCondition.Reason {
 		case cmapi.CertificateRequestReasonIssued:
+			if !initializingObservedAt.IsZero() {
+				elapsed := time.Since(initializingObservedAt).Round(time.Second)
+				if elapsed >= time.Minute {
+					log.Info("CertificateRequest signed after slow start — ZTS latency may have spiked",
+						"request_namespace", updatedReq.Namespace,
+						"request_name", updatedReq.Name,
+						"elapsed_since_initializing", elapsed)
+				}
+			}
 			log.V(4).Info("CertificateRequest has been issued!")
 		case cmapi.CertificateRequestReasonFailed:
 			return false, fmt.Errorf("request %q has failed: %s", updatedReq.Name, readyCondition.Message)
@@ -600,6 +623,25 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 			if isApproved {
 				lastFailureReason = fmt.Sprintf("request %q is pending: %v", updatedReq.Name, readyCondition.Message)
 			}
+			return false, nil
+		case "Initializing":
+			// issuer-lib stamps Unknown/Initializing when it first picks up a
+			// CertificateRequest. Track how long we stay in this state so we can
+			// surface slow-signing events that would previously have caused silent
+			// renewal failures (ATHENS-9509).
+			if initializingObservedAt.IsZero() {
+				initializingObservedAt = time.Now()
+				log.V(2).Info("CertificateRequest is being initialised by issuer — waiting for signing",
+					"request_namespace", updatedReq.Namespace,
+					"request_name", updatedReq.Name)
+			} else if !slowSigningWarned && time.Since(initializingObservedAt) >= time.Minute {
+				slowSigningWarned = true
+				log.Info("CertificateRequest has been in Initializing state for over 1 minute — ZTS may be slow or athenz-issuer is delayed; check athenz-issuer logs",
+					"request_namespace", updatedReq.Namespace,
+					"request_name", updatedReq.Name,
+					"elapsed_since_initializing", time.Since(initializingObservedAt).Round(time.Second))
+			}
+			lastFailureReason = fmt.Sprintf("request %q is initializing: %v", updatedReq.Name, readyCondition.Message)
 			return false, nil
 		default:
 			lastFailureReason = fmt.Sprintf("request %q has unrecognised Ready condition state (%s): %s", updatedReq.Name, readyCondition.Reason, readyCondition.Message)
@@ -614,6 +656,16 @@ func (m *Manager) handleRequest(ctx context.Context, volumeID string, meta metad
 		return true, nil
 	}); err != nil {
 		if wait.Interrupted(err) {
+			if !initializingObservedAt.IsZero() {
+				// Timed out while the issuer was still in Initializing — the most
+				// likely cause is ZTS latency. Log enough detail to correlate with
+				// athenz-issuer logs.
+				log.Info("Renewal timed out while CertificateRequest was still Initializing — check athenz-issuer and ZTS logs around this timestamp",
+					"request_namespace", req.Namespace,
+					"request_name", req.Name,
+					"elapsed_since_initializing", time.Since(initializingObservedAt).Round(time.Second),
+					"timeout", m.issueRenewalTimeout)
+			}
 			// try and return a more helpful error message than "timed out waiting for the condition"
 			return fmt.Errorf("waiting for request: %s", lastFailureReason)
 		}
