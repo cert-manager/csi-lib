@@ -161,7 +161,7 @@ func TestMetricsServer(t *testing.T) {
 		GenerateRequest: func(meta metadata.Metadata) (*manager.CertificateRequestBundle, error) {
 			return &manager.CertificateRequestBundle{
 				Namespace: testNamespace,
-				IssuerRef: cmmeta.ObjectReference{
+				IssuerRef: cmmeta.IssuerReference{
 					Name:  "test-issuer",
 					Kind:  "test-issuer-kind",
 					Group: "test-issuer-group",

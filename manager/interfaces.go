@@ -71,7 +71,7 @@ type CertificateRequestBundle struct {
 	Namespace string
 
 	// The IssuerRef to be added to the CertificateRequest.
-	IssuerRef cmmeta.ObjectReference
+	IssuerRef cmmeta.IssuerReference
 
 	// Request duration/validity period of the certificate
 	Duration time.Duration

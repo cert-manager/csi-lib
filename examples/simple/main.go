@@ -226,7 +226,7 @@ func generateRequest(meta metadata.Metadata) (*manager.CertificateRequestBundle,
 		Namespace: namespace,
 		Duration:  duration,
 		Usages:    keyUsagesFromAttributes(meta.VolumeContext[KeyUsagesKey]),
-		IssuerRef: cmmeta.ObjectReference{
+		IssuerRef: cmmeta.IssuerReference{
 			Name:  meta.VolumeContext[IssuerNameKey],
 			Kind:  meta.VolumeContext[IssuerKindKey],
 			Group: meta.VolumeContext[IssuerGroupKey],
