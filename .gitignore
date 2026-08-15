@@ -28,3 +28,6 @@ testbin/*
 _bin
 _certs
 .vscode
+
+# hegel property-testing example database
+.hegel/
