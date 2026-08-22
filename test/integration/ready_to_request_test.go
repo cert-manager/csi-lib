@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,5 +271,117 @@ func TestFailsIfNotReadyToRequest_ContinueOnNotReadyDisabled(t *testing.T) {
 		return true, nil
 	}); err != nil {
 		t.Errorf("failed to wait for storage backend to return NotFound: %v", err)
+	}
+}
+
+func TestConcurrentPublishForSameVolumeReturnsAbortedWithoutCrossCleanup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer cancel()
+
+	store := storage.NewMemoryFS()
+
+	blockFirstIssue := make(chan struct{})
+	firstIssueStarted := make(chan struct{})
+	var firstIssueStartOnce sync.Once
+
+	_, cl, stop := testdriver.Run(t, testdriver.Options{
+		Store:          store,
+		ReadyToRequest: manager.AlwaysReadyToRequest,
+		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
+			firstIssueStartOnce.Do(func() {
+				close(firstIssueStarted)
+			})
+			<-blockFirstIssue
+			return nil, fmt.Errorf("forced issuance failure")
+		},
+	})
+	defer stop()
+
+	request1 := &csi.NodePublishVolumeRequest{
+		VolumeId: "test-vol",
+		VolumeContext: map[string]string{
+			"csi.storage.k8s.io/ephemeral":     "true",
+			"csi.storage.k8s.io/pod.name":      "the-pod-name",
+			"csi.storage.k8s.io/pod.namespace": "the-pod-namespace",
+		},
+		TargetPath: t.TempDir(),
+		Readonly:   true,
+	}
+
+	request2 := &csi.NodePublishVolumeRequest{
+		VolumeId: "test-vol",
+		VolumeContext: map[string]string{
+			"csi.storage.k8s.io/ephemeral":     "true",
+			"csi.storage.k8s.io/pod.name":      "the-pod-name",
+			"csi.storage.k8s.io/pod.namespace": "the-pod-namespace",
+		},
+		TargetPath: t.TempDir(),
+		Readonly:   true,
+	}
+
+	firstErr := make(chan error, 1)
+	go func() {
+		_, err := cl.NodePublishVolume(ctx, request1)
+		firstErr <- err
+	}()
+
+	select {
+	case <-firstIssueStarted:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for first publish call to enter issuance")
+	}
+
+	_, err := cl.NodePublishVolume(ctx, request2)
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("unexpected error code from second concurrent publish call: %v", err)
+	}
+
+	if _, err := store.ReadMetadata("test-vol"); err != nil {
+		t.Fatalf("expected metadata to remain while first call is still in progress, got: %v", err)
+	}
+
+	close(blockFirstIssue)
+	if err := <-firstErr; err == nil {
+		t.Fatalf("expected first publish call to fail once unblocked")
+	}
+}
+
+func TestImmediateManagementErrorStillCleansUpOwnedState(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+
+	store := storage.NewMemoryFS()
+
+	_, cl, stop := testdriver.Run(t, testdriver.Options{
+		Store:          store,
+		ReadyToRequest: manager.AlwaysReadyToRequest,
+		GeneratePrivateKey: func(meta metadata.Metadata) (crypto.PrivateKey, error) {
+			return nil, fmt.Errorf("forced issuance failure")
+		},
+	})
+	defer stop()
+
+	_, err := cl.NodePublishVolume(ctx, &csi.NodePublishVolumeRequest{
+		VolumeId: "test-vol",
+		VolumeContext: map[string]string{
+			"csi.storage.k8s.io/ephemeral":     "true",
+			"csi.storage.k8s.io/pod.name":      "the-pod-name",
+			"csi.storage.k8s.io/pod.namespace": "the-pod-namespace",
+		},
+		TargetPath: t.TempDir(),
+		Readonly:   true,
+	})
+	if err == nil {
+		t.Fatalf("expected publish call to fail")
+	}
+
+	if err := wait.PollUntilContextCancel(ctx, time.Millisecond*50, true, func(ctx context.Context) (bool, error) {
+		_, err := store.ReadFiles("test-vol")
+		if errors.Is(err, storage.ErrNotFound) {
+			return true, nil
+		}
+		return false, nil
+	}); err != nil {
+		t.Fatalf("expected volume data to be cleaned up after failure: %v", err)
 	}
 }
