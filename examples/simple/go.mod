@@ -5,7 +5,7 @@ go 1.26.0
 replace github.com/cert-manager/csi-lib => ../../
 
 require (
-	github.com/cert-manager/cert-manager v1.21.1
+	github.com/cert-manager/cert-manager v1.21.2
 	github.com/cert-manager/csi-lib v0.0.0-00010101000000-000000000000
 	github.com/prometheus/client_golang v1.24.1
 	golang.org/x/sync v0.23.0
