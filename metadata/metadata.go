@@ -48,6 +48,11 @@ type Metadata struct {
 
 	// VolumeMountGroup is the filesystem group that the volume should be mounted as.
 	VolumeMountGroup string `json:"volumeMountGroup,omitempty"`
+
+	// Secrets contains data from the secret referenced by nodePublishSecretRef.
+	// Not persisted to disk — repopulated on every NodePublishVolume call and
+	// kept in-memory by the manager for renewals.
+	Secrets map[string]string `json:"-"`
 }
 
 // FromNodePublishVolumeRequest constructs a Metadata from a NodePublishVolumeRequest.
@@ -58,6 +63,7 @@ func FromNodePublishVolumeRequest(request *csi.NodePublishVolumeRequest) Metadat
 		TargetPath:       request.GetTargetPath(),
 		VolumeContext:    request.GetVolumeContext(),
 		VolumeMountGroup: request.GetVolumeCapability().GetMount().GetVolumeMountGroup(),
+		Secrets:          request.GetSecrets(),
 	}
 }
 
