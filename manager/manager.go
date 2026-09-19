@@ -981,6 +981,10 @@ func (m *Manager) Stop() {
 // NotBefore).
 func calculateNextIssuanceTime(chain []byte) (time.Time, error) {
 	block, _ := pem.Decode(chain)
+	if block == nil {
+		return time.Time{}, errors.New("parsing issued certificate: no PEM data found in the issued chain")
+	}
+
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parsing issued certificate: %w", err)
