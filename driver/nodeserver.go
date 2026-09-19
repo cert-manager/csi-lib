@@ -90,6 +90,8 @@ func (ns *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublis
 		}
 	}
 
+	ns.manager.StoreVolumeSecrets(req.GetVolumeId(), req.GetSecrets())
+
 	if !ns.manager.IsVolumeReady(req.GetVolumeId()) {
 		// Only wait for the volume to be ready if it is in a state of 'ready to request'
 		// already. This allows implementors to defer actually requesting certificates
