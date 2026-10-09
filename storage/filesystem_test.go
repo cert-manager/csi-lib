@@ -18,18 +18,71 @@ package storage
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
-	"testing/fstest"
 
 	"github.com/cert-manager/csi-lib/metadata"
+	"github.com/go-logr/logr"
 )
 
+func setupTestFolder(t *testing.T, files map[string][]byte) string {
+	t.Helper()
+
+	testDir := t.TempDir()
+	for name, data := range files {
+		path := filepath.Join(testDir, name)
+
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("failed to create directory %q: %v", filepath.Dir(path), err)
+		}
+
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatalf("failed to write file %q: %v", name, err)
+		}
+	}
+
+	return testDir
+}
+
 func TestFilesystem_ReadFile(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/data/file": []byte("hello world"),
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
+	}
+
+	d, err := backend.ReadFile("fake-volume", "file")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if string(d) != "hello world" {
+		t.Errorf("expected contents 'hello world' but got: %v", string(d))
+	}
+}
+
+func TestFilesystem_WriteFiles(t *testing.T) {
+	parentFolderMode = 0755
+	volumeFolderMode = 0755
+	volumeDataFolderMode = 0755
+
+	folder := setupTestFolder(t, map[string][]byte{})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
+	}
+
+	if err := backend.WriteFiles(metadata.Metadata{
+		VolumeID: "fake-volume",
+	}, map[string][]byte{
+		"file": []byte("hello world"),
+	}); err != nil {
+		t.Errorf("unexpected error: %v", err)
 	}
 
 	d, err := backend.ReadFile("fake-volume", "file")
@@ -42,47 +95,59 @@ func TestFilesystem_ReadFile(t *testing.T) {
 }
 
 func TestFilesystem_ReadFile_NotFound(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/data/file": &fstest.MapFile{Data: []byte("hello world")},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/data/file": []byte("hello world"),
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
-	_, err := backend.ReadFile("fake-volume", "file2")
+	_, err = backend.ReadFile("fake-volume", "file2")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected %v but got: %v", ErrNotFound, err)
 	}
 }
 
 func TestFilesystem_MetadataForVolume_NotFound(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{},
+	folder := setupTestFolder(t, map[string][]byte{})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
-	_, err := backend.ReadMetadata("fake-volume")
+	_, err = backend.ReadMetadata("fake-volume")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected %v but got: %v", ErrNotFound, err)
 	}
 }
 
 func TestFilesystem_MetadataForVolume_InvalidJSON(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte("{")},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/metadata.json": []byte("{"),
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
-	_, err := backend.ReadMetadata("fake-volume")
+	_, err = backend.ReadMetadata("fake-volume")
 	if !errors.Is(err, ErrInvalidJSON) {
 		t.Errorf("expected %v but got: %v", ErrInvalidJSON, err)
 	}
 }
 
 func TestFilesystem_MetadataForVolume(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "volumeContext": {"a": "b"}}`)},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/metadata.json": []byte(`{"volumeID": "fake-volume", "targetPath": "/fake-volume", "volumeContext": {"a": "b"}}`),
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
 	meta, err := backend.ReadMetadata("fake-volume")
@@ -100,10 +165,13 @@ func TestFilesystem_MetadataForVolume(t *testing.T) {
 }
 
 func TestFilesystem_ListVolumes(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte{}},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/metadata.json": {},
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
 	vols, err := backend.ListVolumes()
@@ -119,11 +187,14 @@ func TestFilesystem_ListVolumes(t *testing.T) {
 }
 
 func TestFilesystem_ListVolumes_CleansUpCorruptVolumes(t *testing.T) {
-	backend := &Filesystem{
-		fs: fstest.MapFS{
-			"inmemfs/fake-volume/metadata.json": &fstest.MapFile{Data: []byte{}},
-			"inmemfs/fake-emptyvolume/nothing":  &fstest.MapFile{Data: []byte{}},
-		},
+	folder := setupTestFolder(t, map[string][]byte{
+		"fake-volume/metadata.json": {},
+		"fake-emptyvolume/nothing":  {},
+	})
+
+	backend, err := NewFilesystemOnDisk(logr.Discard(), folder)
+	if err != nil {
+		t.Fatalf("failed to create filesystem: %v", err)
 	}
 
 	vols, err := backend.ListVolumes()
