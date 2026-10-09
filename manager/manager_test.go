@@ -671,18 +671,40 @@ func Test_calculateNextIssuanceTime(t *testing.T) {
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 
 	tests := map[string]struct {
+		chain   []byte
 		expTime time.Time
 		expErr  bool
 	}{
 		"if no attributes given, return 2/3rd certificate lifetime": {
+			chain:   certPEM,
 			expTime: notBefore.AddDate(0, 0, 2),
 			expErr:  false,
+		},
+		"a nil chain is rejected": {
+			chain:  nil,
+			expErr: true,
+		},
+		"an empty chain is rejected": {
+			chain:  []byte{},
+			expErr: true,
+		},
+		"a chain that is not PEM is rejected": {
+			chain:  []byte("this is not a PEM encoded certificate"),
+			expErr: true,
+		},
+		"a truncated PEM block is rejected": {
+			chain:  certPEM[:len(certPEM)/2],
+			expErr: true,
+		},
+		"a PEM block that is not a certificate is rejected": {
+			chain:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not DER")}),
+			expErr: true,
 		},
 	}
 
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			renewTime, err := calculateNextIssuanceTime(certPEM)
+			renewTime, err := calculateNextIssuanceTime(test.chain)
 			assert.Equal(t, test.expErr, err != nil)
 			assert.Equal(t, test.expTime, renewTime)
 		})
