@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/cert-manager/cert-manager v1.21.3
-	github.com/container-storage-interface/spec v1.13.0
+	github.com/container-storage-interface/spec v1.14.0
 	github.com/go-logr/logr v1.4.4
 	github.com/kubernetes-csi/csi-lib-utils v0.25.0
 	github.com/prometheus/client_golang v1.25.0
