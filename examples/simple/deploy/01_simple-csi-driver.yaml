@@ -50,7 +50,7 @@ spec:
       labels:
         app: simple-csi
     spec:
-      serviceAccount: simple-csi
+      serviceAccountName: simple-csi
 
       containers:
         - name: node-driver-registrar
@@ -83,7 +83,7 @@ spec:
             readOnlyRootFilesystem: true
           image: simple-csi:latest
           imagePullPolicy: "Never"
-          args :
+          args:
             - --node-id=$(NODE_ID)
             - --endpoint=$(CSI_ENDPOINT)
             - --data-root=csi-data-dir
